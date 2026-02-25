@@ -1,0 +1,142 @@
+name: Bug Report
+about: Report bugs or issues with DECAID system functionality
+title: "[Bug] "
+body: |
+  <!--- Thank you for reporting a bug! Please fill out the sections below -->
+  
+  **Describe the bug**
+  A clear and concise description of what the bug is.
+  
+  **To Reproduce**
+  Steps to reproduce the behavior:
+  1. Go to '...'
+  2. Click on '....'
+  3. Scroll down to '....'
+  4. See error
+  
+  **Expected behavior**
+  A clear and concise description of what you expected to happen.
+  
+  **Actual behavior**
+  A clear and concise description of what actually happened.
+  
+  **Screenshots**
+  If applicable, add screenshots to help explain your problem.
+  
+  **Environment**
+  - OS: [e.g. Windows 11, macOS 13.0]
+  - Browser: [e.g. Chrome 120, Firefox 121]
+  - DECAID Version: [e.g. v1.0.0]
+  
+  **Additional context**
+  Add any other context about the problem here.
+  
+  **Possible Solution**
+  If you have ideas on how to fix it, let us know.
+
+labels: ["bug", "needs-triage"]
+assignees: []
+projects: []
+milestone: ""
+
+---
+name: Feature Request
+about: Suggest new features or enhancements for DECAID
+title: "[Feature] "
+body: |
+  <!--- Thank you for suggesting a feature! Please fill out the sections below -->
+  
+  **Feature Description**
+  A clear and concise description of the feature you'd like to see added to DECAID.
+  
+  **Problem Statement**
+  What problem does this feature solve? What limitation does it address?
+  
+  **Proposed Solution**
+  How do you envision this feature working? Please describe in detail.
+  
+  **Use Cases**
+  Describe specific scenarios where this feature would be valuable:
+  1. As a [user type], I want to [action] so that [benefit]
+  2. As a [user type], I need to [capability] in order to [goal]
+  
+  **Alternatives Considered**
+  What other approaches or solutions have you considered? Why is your preferred approach better?
+  
+  **Priority**
+  - [ ] High - Critical for core functionality
+  - [ ] Medium - Important enhancement
+  - [ ] Low - Nice to have
+  
+  **Additional Notes**
+  Any other context, mockups, or technical considerations about this feature.
+  
+  **Implementation Ideas**
+  If you have technical thoughts on how this could be implemented, share them here.
+
+labels: ["enhancement", "needs-discussion"]
+assignees: []
+projects: []
+milestone: ""
+
+---
+name: Security Issue
+about: Report security vulnerabilities (private by default)
+title: "[Security] "
+body: |
+  <!--- IMPORTANT: For security vulnerabilities, please email directly instead of creating a public issue. -->
+  <!--- Email: security@decaid-project.com -->
+  
+  **Vulnerability Type**
+  - [ ] Authentication Bypass
+  - [ ] Data Exposure
+  - [ ] Code Injection
+  - [ ] Cross-Site Scripting (XSS)
+  - [ ] Privilege Escalation
+  - [ ] Denial of Service
+  - [ ] Sensitive Data Leak
+  - [ ] Other (please specify)
+  
+  **Severity**
+  - [ ] Critical - Immediate action required
+  - [ ] High - Important to fix quickly
+  - [ ] Medium - Should be addressed in next release
+  - [ ] Low - Minor issue
+  
+  **Description**
+  Provide a detailed description of the security vulnerability.
+  
+  **Affected Components**
+  - [ ] Frontend (React)
+  - [ ] Backend (Node.js)
+  - [ ] AI Service (Python)
+  - [ ] Blockchain (Smart Contract)
+  - [ ] Database (PostgreSQL)
+  - [ ] Infrastructure (Docker, etc.)
+  
+  **Steps to Reproduce**
+  1. 
+  2. 
+  3. 
+  4. 
+  
+  **Impact Assessment**
+  What is the potential impact of this vulnerability?
+  - Data exposure scope
+  - System compromise risk
+  - User privacy implications
+  - Financial/Reputational damage
+  
+  **Mitigation**
+  Have you implemented any temporary mitigations?
+  
+  **Proof of Concept**
+  If available, provide code snippets or screenshots demonstrating the vulnerability.
+  
+  **Additional Context**
+  Any other relevant information about the environment, configuration, or related systems.
+
+labels: ["security", "urgent"]
+assignees: []
+projects: []
+milestone: ""
