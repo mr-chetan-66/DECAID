@@ -1,0 +1,26 @@
+{
+  "name": "decaid-system",
+  "version": "1.0.0",
+  "description": "Decentralized Academic Identity and Credential Risk Assessment System",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\" \"npm run ai-service\"",
+    "server": "cd backend && npm run dev",
+    "client": "cd frontend && npm run dev",
+    "ai-service": "cd ai-service && uvicorn main:app --reload --port 8000",
+    "blockchain": "cd blockchain && npx hardhat node",
+    "deploy": "cd blockchain && npx hardhat run scripts/deploy.js --network localhost",
+    "test": "cd backend && npm test && cd ../ai-service && python -m pytest",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": [
+    "blockchain",
+    "academic-credentials",
+    "fraud-detection",
+    "decentralized-identity"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
