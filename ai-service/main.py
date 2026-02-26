@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+import re
 
 import numpy as np
 from fastapi import FastAPI
@@ -10,11 +11,11 @@ app = FastAPI(title="DECAID AI Fraud Risk Service")
 
 
 class ScoreRequest(BaseModel):
-    studentId: str = Field(min_length=1)
-    issuerId: str = Field(min_length=1)
-    credentialHash: str = Field(min_length=16)
+    studentId: str = Field(min_length=1, max_length=255)
+    issuerId: str = Field(min_length=1, max_length=255)
+    credentialHash: str = Field(min_length=64, max_length=64, regex=r'^[0-9a-fA-F]{64}$')
     issuedAt: Optional[datetime] = None
-    batchId: Optional[str] = None
+    batchId: Optional[str] = Field(max_length=255)
 
 
 def _clamp_int(v: float, lo: int = 0, hi: int = 100) -> int:
@@ -113,16 +114,27 @@ def health():
 
 @app.post("/score")
 def score(req: ScoreRequest):
-    x = _features(req)
+    try:
+        # Validate input
+        if not req.studentId or not req.issuerId or not req.credentialHash:
+            return {"ok": False, "error": "Missing required fields"}
+        
+        # Validate hash format
+        if not re.match(r'^[0-9a-fA-F]{64}$', req.credentialHash):
+            return {"ok": False, "error": "Invalid hash format"}
+        
+        x = _features(req)
 
-    # IsolationForest: higher is more normal. Convert to anomaly-based risk.
-    s = float(_model.decision_function(x)[0])
+        # IsolationForest: higher is more normal. Convert to anomaly-based risk.
+        s = float(_model.decision_function(x)[0])
 
-    # Calibrate to 0-100. (Heuristic mapping; refine with labeled data.)
-    risk = _clamp_int((0.5 - s) * 100.0)
+        # Calibrate to 0-100. (Heuristic mapping; refine with labeled data.)
+        risk = _clamp_int((0.5 - s) * 100.0)
 
-    return {
-        "ok": True,
-        "riskScore": risk,
-        "model": "isolation_forest",
-    }
+        return {
+            "ok": True,
+            "riskScore": risk,
+            "model": "isolation_forest",
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"Processing error: {str(e)}"}

@@ -2,31 +2,41 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { z } from 'zod';
+import ethers from 'ethers';
+import { create } from 'ipfs-http-client';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { ethers } from 'ethers';
-import { create as createIpfsClient } from 'ipfs-http-client';
+
 import {
   initDatabase,
-  getIssuerStats,
-  initIssuerStats,
-  updateIssuerStats,
   createBatch,
   completeBatch,
   addBatchResult,
   getBatch,
   getBatchResults,
-  getAllBatches,
+  getIssuerStats,
+  updateIssuerStats,
   findResultsByHash,
-  findResultsByStudent,
   getStudentDid,
-  createStudentDid
+  createOrUpdateStudentDid
 } from './database.js';
+
+import {
+  limiter,
+  strictLimiter,
+  authenticateToken,
+  optionalAuth,
+  generateToken,
+  initDemoUsers,
+  authenticateUser
+} from './auth.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+app.use(limiter); // Apply rate limiting to all requests
+
+// Initialize demo users
+initDemoUsers();
 
 // In-memory stores for backward compatibility during migration
 const batchStore = new Map();
@@ -252,6 +262,113 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'backend', ts: new Date().toISOString() });
 });
 
+// Authentication routes
+const LoginRequest = z.object({
+  email: z.string().email(),
+  password: z.string().min(1)
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const parsed = LoginRequest.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: 'Invalid email or password' });
+  }
+
+  const user = authenticateUser(parsed.data.email, parsed.data.password);
+  if (!user) {
+    return res.status(401).json({ ok: false, error: 'Invalid credentials' });
+  }
+
+  const token = generateToken(user);
+  return res.json({
+    ok: true,
+    token,
+    user: {
+      userId: user.userId,
+      email: user.email,
+      role: user.role,
+      issuerId: user.issuerId
+    }
+  });
+});
+
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+  return res.json({
+    ok: true,
+    user: {
+      userId: req.user.userId,
+      role: req.user.role,
+      issuerId: req.user.issuerId
+    }
+  });
+});
+
+// Blockchain issuer management
+app.post('/api/blockchain/authorize-issuer', strictLimiter, authenticateToken, async (req, res) => {
+  const { issuerAddress } = req.body;
+  
+  if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
+    return res.status(400).json({ ok: false, error: 'Invalid issuer address' });
+  }
+
+  try {
+    const registry = getRegistry();
+    const tx = await registry.authorizeIssuer(issuerAddress);
+    const receipt = await tx.wait();
+    
+    return res.json({
+      ok: true,
+      txHash: receipt?.hash || tx.hash,
+      issuerAddress
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/blockchain/deauthorize-issuer', strictLimiter, authenticateToken, async (req, res) => {
+  const { issuerAddress } = req.body;
+  
+  if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
+    return res.status(400).json({ ok: false, error: 'Invalid issuer address' });
+  }
+
+  try {
+    const registry = getRegistry();
+    const tx = await registry.deauthorizeIssuer(issuerAddress);
+    const receipt = await tx.wait();
+    
+    return res.json({
+      ok: true,
+      txHash: receipt?.hash || tx.hash,
+      issuerAddress
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get('/api/blockchain/is-authorized/:issuerAddress', async (req, res) => {
+  const { issuerAddress } = req.params;
+  
+  if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
+    return res.status(400).json({ ok: false, error: 'Invalid issuer address' });
+  }
+
+  try {
+    const registry = getRegistry();
+    const isAuthorized = await registry.isAuthorizedIssuer(issuerAddress);
+    
+    return res.json({
+      ok: true,
+      issuerAddress,
+      isAuthorized
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 const RiskRequest = z.object({
   studentId: z.string().min(1),
   issuerId: z.string().min(1),
@@ -325,7 +442,7 @@ const CreateBatchRequest = z.object({
   credentials: z.array(BatchCredential).min(1).max(500)
 });
 
-app.post('/api/institutions/batches', async (req, res) => {
+app.post('/api/institutions/batches', strictLimiter, authenticateToken, async (req, res) => {
   const parsed = CreateBatchRequest.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });
@@ -668,7 +785,7 @@ const VerifyByHashQuery = z.object({
   issuerId: z.string().min(1).optional()
 });
 
-app.get('/api/verify/by-hash/:hash', async (req, res) => {
+app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
   const h = String(req.params.hash || '').trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(h)) {
     return res.status(400).json({ ok: false, error: 'Invalid hash' });
@@ -717,13 +834,43 @@ app.get('/api/verify/by-hash/:hash', async (req, res) => {
     }
   }
 
-  let risk = { ok: false, error: 'missing studentId/issuerId' };
-  if (studentId && issuerId) {
+  // Calculate risk score - try to find missing IDs from batch data if not provided
+  let risk = { ok: false, error: 'Insufficient data for risk assessment' };
+  let effectiveStudentId = studentId;
+  let effectiveIssuerId = issuerId;
+  
+  // If studentId or issuerId missing, try to find from batch data
+  if ((!studentId || !issuerId) && useDatabase) {
+    const dbResults = await findResultsByHash(h);
+    if (dbResults.length > 0) {
+      effectiveStudentId = effectiveStudentId || dbResults[0].student_id;
+      effectiveIssuerId = effectiveIssuerId || dbResults[0].issuer_id;
+    }
+  }
+  
+  // Fallback to in-memory if database doesn't have the data
+  if ((!effectiveStudentId || !effectiveIssuerId) && !useDatabase) {
+    for (const record of batchStore.values()) {
+      const found = (record.results || []).find((r) => String(r.credentialHash || '').toLowerCase() === h);
+      if (found) {
+        effectiveStudentId = effectiveStudentId || found.studentId;
+        effectiveIssuerId = effectiveIssuerId || found.issuerId;
+        break;
+      }
+    }
+  }
+  
+  // Calculate risk if we have the required data
+  if (effectiveStudentId && effectiveIssuerId) {
     try {
       const r = await fetch(`${aiUrl}/score`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ studentId, issuerId, credentialHash: h })
+        body: JSON.stringify({ 
+          studentId: effectiveStudentId, 
+          issuerId: effectiveIssuerId, 
+          credentialHash: h 
+        })
       });
       const body = await r.json();
       if (r.ok && body?.ok) {
@@ -771,7 +918,7 @@ const IssueRequest = z.object({
   batchId: z.string().optional()
 });
 
-app.post('/api/credentials/issue', async (req, res) => {
+app.post('/api/credentials/issue', strictLimiter, authenticateToken, async (req, res) => {
   const parsed = IssueRequest.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });
@@ -798,7 +945,7 @@ const RevokeRequest = z.object({
   credentialHash: z.string().regex(/^[0-9a-fA-F]{64}$/)
 });
 
-app.post('/api/credentials/revoke', async (req, res) => {
+app.post('/api/credentials/revoke', strictLimiter, authenticateToken, async (req, res) => {
   const parsed = RevokeRequest.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });

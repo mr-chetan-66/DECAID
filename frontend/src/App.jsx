@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { generateZkpProof, getApiBaseUrl, getStudentProfile, setApiBaseUrl, verifyByHash, verifyZkpProof } from './api.js';
+import { AuthProvider, useAuth } from './auth.js';
+import Login from './Login.jsx';
 
 function Badge({ label, tone }) {
   const cls = useMemo(() => {
@@ -30,7 +32,9 @@ function formatUnix(ts) {
   return isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
 }
 
-export default function App() {
+function AppContent() {
+  const { user, getAuthHeaders, isAuthenticated } = useAuth();
+  const [showLogin, setShowLogin] = useState(false);
   const [apiBaseUrl, setApiBaseUrlState] = useState(getApiBaseUrl());
   const [tab, setTab] = useState('employer');
   const [hash, setHash] = useState('');
@@ -84,7 +88,11 @@ export default function App() {
 
     setLoading(true);
     try {
-      const out = await verifyByHash({ hash: h, studentId: studentId.trim(), issuerId: issuerId.trim() });
+      const out = await verifyByHash({ 
+        hash: h, 
+        studentId: studentId.trim(), 
+        issuerId: issuerId.trim() 
+      }, getAuthHeaders());
       setData(out);
     } catch (err) {
       setError(err?.message || 'Verification failed');
@@ -106,10 +114,10 @@ export default function App() {
 
     setStudentLoading(true);
     try {
-      const out = await getStudentProfile(sid);
+      const out = await getStudentProfile(sid, getAuthHeaders());
       setStudentProfile(out);
     } catch (err) {
-      setStudentError(err?.message || 'Failed to load student profile');
+      setStudentError(err?.message || 'Student lookup failed');
     } finally {
       setStudentLoading(false);
     }
@@ -589,8 +597,8 @@ export default function App() {
                 {!studentProfile ? (
                   <div className="text-sm text-slate-400">Load a student profile to view DID and aggregated credentials.</div>
                 ) : (
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-center gap-2">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 mb-4">
                       <Badge label={`DID: ${studentProfile.did}`} tone="slate" />
                       <Badge
                         label={
@@ -894,6 +902,20 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Login Modal */}
+      {showLogin && (
+        <Login onClose={() => setShowLogin(false)} />
+      )}
     </div>
+  );
+}
+
+// Wrap with AuthProvider
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
