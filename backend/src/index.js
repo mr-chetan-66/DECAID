@@ -2,9 +2,11 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { z } from 'zod';
-import ethers from 'ethers';
+import { ethers } from 'ethers';
 import { create } from 'ipfs-http-client';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import {
   initDatabase,
@@ -17,7 +19,7 @@ import {
   updateIssuerStats,
   findResultsByHash,
   getStudentDid,
-  createOrUpdateStudentDid
+  createStudentDid
 } from './database.js';
 
 import {
@@ -42,6 +44,7 @@ initDemoUsers();
 const batchStore = new Map();
 const issuerStats = new Map();
 const studentDidStore = new Map();
+const individualCredentialStore = new Map(); // Store individual credentials
 
 // Feature flag: use PostgreSQL if available
 const useDatabase = process.env.DB_HOST !== undefined;
@@ -705,6 +708,26 @@ app.get('/api/students/:studentId/profile', async (req, res) => {
         }
       }
     }
+    
+    // Also check individual credential store
+    for (const [credentialHash, cred] of individualCredentialStore.entries()) {
+      if (String(cred.studentId || '').trim() === studentId) {
+        matches.push({
+          batchId: 'individual-credential',
+          credentialHash: credentialHash,
+          issuerId: cred.issuerId,
+          certificateNumber: null,
+          ipfsCid: null,
+          ipfsError: null,
+          txHash: cred.txHash || null,
+          chainError: null,
+          riskScore: null,
+          riskModel: null,
+          aiError: null,
+          createdAt: cred.createdAt
+        });
+      }
+    }
   }
 
   let registry;
@@ -740,7 +763,7 @@ app.get('/api/students/:studentId/profile', async (req, res) => {
         const r = await fetch(`${aiUrl}/score`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ studentId, issuerId: c.issuerId, credentialHash: hashHex })
+          body: JSON.stringify({ studentId, issuerId: c.issuerId, credentialHash: hashHex, batchId: 'individual-credential-batch' })
         });
         const body = await r.json();
         if (r.ok && body?.ok) {
@@ -834,7 +857,7 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
     }
   }
 
-  // Calculate risk score - try to find missing IDs from batch data if not provided
+  // Calculate risk score - use provided IDs or try to find from batch data
   let risk = { ok: false, error: 'Insufficient data for risk assessment' };
   let effectiveStudentId = studentId;
   let effectiveIssuerId = issuerId;
@@ -869,7 +892,8 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
         body: JSON.stringify({ 
           studentId: effectiveStudentId, 
           issuerId: effectiveIssuerId, 
-          credentialHash: h 
+          credentialHash: h,
+          batchId: 'individual-credential-batch'
         })
       });
       const body = await r.json();
@@ -931,6 +955,17 @@ app.post('/api/credentials/issue', strictLimiter, authenticateToken, async (req,
     const registry = getRegistry();
     const tx = await registry.issue(credentialHashBytes32);
     const receipt = await tx.wait();
+    
+    // Store individual credential for student profile lookup
+    individualCredentialStore.set(credentialHashHex, {
+      studentId: parsed.data.studentId,
+      issuerId: parsed.data.issuerId,
+      credentialData: parsed.data.credentialData,
+      issuedAt: parsed.data.issuedAt || new Date().toISOString(),
+      txHash: receipt?.hash || tx.hash,
+      createdAt: new Date().toISOString()
+    });
+    
     return res.json({
       ok: true,
       credentialHash: credentialHashHex,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAuth } from './auth.js';
+import { useAuth } from './auth.jsx';
 
 export default function Login({ onClose }) {
   const [email, setEmail] = useState('');

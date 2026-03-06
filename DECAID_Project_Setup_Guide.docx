@@ -1,0 +1,208 @@
+DECAID PROJECT SETUP GUIDE
+========================
+
+🎯 Complete Guide to Run DECAID Project in VS Code
+==================================================
+
+📋 TABLE OF CONTENTS
+--------------------
+1. Project Overview
+2. Prerequisites
+3. VS Code Setup
+4. Terminal Configuration
+5. Startup Commands
+6. Service Verification
+7. Login Credentials
+8. Troubleshooting
+9. Stop Commands
+
+🏗️ PROJECT OVERVIEW
+-------------------
+DECAID = Decentralized Academic Credentials Verification System
+
+Components:
+• Frontend (React + Vite) - Port 3000
+• Backend (Node.js + Express) - Port 5000
+• AI Service (FastAPI + Python) - Port 8000
+• Blockchain (Hardhat + Solidity) - Port 8545
+
+🔧 PREREQUISITES
+-----------------
+✅ Node.js (v16+) installed
+✅ Python (v3.8+) installed
+✅ VS Code installed
+✅ Project folder: E:\FinalYearProject
+
+🖥️ VS CODE SETUP
+-----------------
+
+Step 1: Open Project
+------------------
+1. Open VS Code
+2. Open Terminal: Ctrl + Shift + ` (backtick)
+3. Navigate to project:
+   cd E:\FinalYearProject
+
+Step 2: Open 5 Terminals
+-------------------------
+Press Ctrl + Shift + ` 5 times to create 5 separate terminals
+Each terminal will run one service
+
+📋 TERMINAL COMMANDS
+---------------------
+
+🔌 TERMINAL 1: BLOCKCHAIN NETWORK
+----------------------------------
+cd E:\FinalYearProject\blockchain
+npx hardhat node --hostname 127.0.0.1 --port 8545
+
+Expected Output:
+"Started HTTP and WebSocket JSON-RPC server"
+
+🏗️ TERMINAL 2: DEPLOY SMART CONTRACT
+------------------------------------
+cd E:\FinalYearProject\blockchain
+npx hardhat run scripts/deploy.js --network localhost
+
+Expected Output:
+"CredentialRegistry deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3"
+
+🤖 TERMINAL 3: AI SERVICE
+----------------------------
+cd E:\FinalYearProject\ai-service
+python -c "import uvicorn; from main import app; uvicorn.run(app, host='127.0.0.1', port=8000)"
+
+Expected Output:
+"Uvicorn running on http://127.0.0.1:8000"
+
+⚙️ TERMINAL 4: BACKEND API
+----------------------------
+cd E:\FinalYearProject\backend
+npm run dev
+
+Expected Output:
+"Backend listening on http://127.0.0.1:5000"
+
+🌐 TERMINAL 5: FRONTEND
+-------------------------
+cd E:\FinalYearProject\frontend
+npm run dev
+
+Expected Output:
+"Local: http://localhost:3000"
+
+🚀 STARTUP ORDER (IMPORTANT)
+----------------------------
+1️⃣ FIRST: Terminal 1 (Blockchain Network)
+   Wait for "Started HTTP and WebSocket JSON-RPC server"
+
+2️⃣ SECOND: Terminal 2 (Deploy Contract)
+   Wait for "CredentialRegistry deployed to: 0x5FbDB..."
+
+3️⃣ THIRD: Terminal 3 (AI Service)
+   Wait for "Uvicorn running on http://127.0.0.1:8000"
+
+4️⃣ FOURTH: Terminal 4 (Backend)
+   Wait for "Backend listening on http://127.0.0.1:5000"
+
+5️⃣ FIFTH: Terminal 5 (Frontend)
+   Wait for "Local: http://localhost:3000"
+
+🌐 ACCESS APPLICATION
+--------------------
+Frontend URL: http://localhost:3000
+
+🔑 LOGIN CREDENTIALS
+--------------------
+Email: institution@decaid.com
+Password: demo123
+
+Alternative Users:
+• employer@decaid.com / demo123
+• student@decaid.com / demo123
+
+✅ SERVICE VERIFICATION
+----------------------
+Check these URLs to verify all services:
+
+Frontend:     http://localhost:3000
+Backend API:   http://localhost:5000/health
+AI Service:    http://localhost:8000/docs
+Blockchain:     http://localhost:8545
+
+📊 QUICK COPY-PASTE COMMANDS
+----------------------------
+
+Terminal 1 (Blockchain):
+cd E:\FinalYearProject\blockchain && npx hardhat node --hostname 127.0.0.1 --port 8545
+
+Terminal 2 (Deploy):
+cd E:\FinalYearProject\blockchain && npx hardhat run scripts/deploy.js --network localhost
+
+Terminal 3 (AI Service):
+cd E:\FinalYearProject\ai-service && python -c "import uvicorn; from main import app; uvicorn.run(app, host='127.0.0.1', port=8000)"
+
+Terminal 4 (Backend):
+cd E:\FinalYearProject\backend && npm run dev
+
+Terminal 5 (Frontend):
+cd E:\FinalYearProject\frontend && npm run dev
+
+🛑 STOP ALL SERVICES
+--------------------
+To stop all services:
+taskkill /F /IM node.exe
+taskkill /F /IM python.exe
+
+🔧 TROUBLESHOOTING
+-------------------
+
+Issue: Port already in use
+Solution: Stop services with taskkill commands above
+
+Issue: Blockchain not responding
+Solution: Restart Terminal 1 and Terminal 2
+
+Issue: AI service not starting
+Solution: Check Python installation, restart Terminal 3
+
+Issue: Backend not connecting to blockchain
+Solution: Verify contract deployment in Terminal 2
+
+Issue: Frontend not loading
+Solution: Check if backend is running in Terminal 4
+
+🎯 DEMO DATA EXAMPLES
+-----------------------
+
+Example 1: David Kim - MIT AI
+--------------------------------
+Issuer ID: MIT-UNIVERSITY
+Student ID: david.kim@innovate.com
+Credential: Master of Science in Artificial Intelligence - GPA: 3.85/4.0 - Thesis: "Autonomous Systems for Smart Cities" - Graduation: May 2024 - Research: 5 publications in AI conferences - Projects: Self-Driving Car Algorithms, Urban Traffic Optimization, Smart Grid Management - Skills: Python, C++, Reinforcement Learning, Computer Vision, Robotics - Internship: Tesla Autopilot Team - Awards: MIT Innovation Award, Best Thesis 2024 - Specialization: Robotics and Autonomous Systems - Teaching Assistant: Introduction to AI
+
+Example 2: Emily Rodriguez - Harvard Medical
+-------------------------------------------
+Issuer ID: HARVARD-MEDICAL
+Student ID: emily.rodriguez@biogen.com
+Credential: PhD in Biomedical Engineering - GPA: 3.92/4.0 - Dissertation: "Machine Learning for Drug Discovery" - Graduation: June 2024 - Research: 12 publications, 3 patents - Projects: COVID-19 Vaccine Development, Cancer Detection AI, Protein Folding Prediction - Skills: Bioinformatics, Python, Deep Learning, Genomics - Internship: Moderna Therapeutics - Awards: NIH Grant Recipient, Innovation Prize 2024 - Specialization: Computational Biology - Lab Leadership: Molecular Biology Research Group
+
+📞 SUPPORT
+-----------
+If you encounter issues:
+1. Check all terminals for error messages
+2. Verify startup order is correct
+3. Ensure all services show "running" status
+4. Try stopping and restarting services
+
+🎉 SUCCESS INDICATORS
+----------------------
+✅ All 5 terminals show running status
+✅ Frontend loads at http://localhost:3000
+✅ Login works with demo credentials
+✅ Credential issuance succeeds
+✅ Verification shows risk scores and metrics
+
+==================================================
+DECAID Project Setup Complete! 🚀
+==================================================

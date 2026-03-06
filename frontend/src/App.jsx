@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { generateZkpProof, getApiBaseUrl, getStudentProfile, setApiBaseUrl, verifyByHash, verifyZkpProof } from './api.js';
-import { AuthProvider, useAuth } from './auth.js';
+import { AuthProvider, useAuth } from './auth.jsx';
 import Login from './Login.jsx';
 
 function Badge({ label, tone }) {
@@ -33,7 +33,7 @@ function formatUnix(ts) {
 }
 
 function AppContent() {
-  const { user, getAuthHeaders, isAuthenticated } = useAuth();
+  const { user, getAuthHeaders, isAuthenticated, logout, loading: authLoading } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [apiBaseUrl, setApiBaseUrlState] = useState(getApiBaseUrl());
   const [tab, setTab] = useState('employer');
@@ -196,15 +196,54 @@ function AppContent() {
   const riskScore = data?.risk?.ok ? data.risk.riskScore : null;
   const riskTone = riskScore == null ? 'slate' : riskScore >= 70 ? 'red' : riskScore >= 40 ? 'amber' : 'green';
 
+  // Show loading screen while auth is loading
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-white text-lg">Loading DECAID...</div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen">
-      <div className="max-w-6xl mx-auto px-4 py-10">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-100">Employer Verification Dashboard</h1>
-          <p className="text-slate-300 text-sm">
-            Verify credentials by blockchain hash and view risk score, issuer trust rank, and revocation status.
-          </p>
+    <div className="min-h-screen bg-slate-950">
+      {/* Header */}
+      <div className="bg-slate-900/90 backdrop-blur-sm border-b border-white/10">
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-4">
+              <h1 className="text-xl font-bold text-white">DECAID</h1>
+              <span className="text-xs text-slate-400">Decentralized Academic Identity</span>
+            </div>
+            
+            <div className="flex items-center space-x-4">
+              {isAuthenticated ? (
+                <div className="flex items-center space-x-3">
+                  <span className="text-sm text-slate-300">
+                    {user?.email} ({user?.role})
+                  </span>
+                  <button
+                    onClick={() => logout()}
+                    className="text-xs text-slate-400 hover:text-white"
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowLogin(true)}
+                  className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
+                >
+                  Login
+                </button>
+              )}
+            </div>
+          </div>
         </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="max-w-6xl mx-auto px-4 py-10">
 
         <div className="mt-5 flex gap-2">
           <button
@@ -665,9 +704,13 @@ function AppContent() {
                       setInstitutionLoading(true);
                       setInstitutionError('');
                       try {
+                        const authHeaders = getAuthHeaders();
                         const response = await fetch(`${getApiBaseUrl()}/api/credentials/issue`, {
                           method: 'POST',
-                          headers: {'Content-Type': 'application/json'},
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...authHeaders
+                          },
                           body: JSON.stringify({
                             studentId: institutionIssueStudentId,
                             issuerId: institutionIssuerId,
@@ -676,7 +719,43 @@ function AppContent() {
                         });
                         const result = await response.json();
                         if (!response.ok) throw new Error(result.error || 'Issue failed');
-                        alert('Credential issued successfully!\nHash: ' + result.credentialHash);
+                        
+                        // Create copyable hash notification
+                        const hash = result.credentialHash;
+                        const notification = document.createElement('div');
+                        notification.style.cssText = `
+                          position: fixed;
+                          top: 20px;
+                          right: 20px;
+                          background: #10b981;
+                          color: white;
+                          padding: 16px;
+                          border-radius: 8px;
+                          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                          z-index: 1000;
+                          max-width: 400px;
+                        `;
+                        notification.innerHTML = `
+                          <div style="font-weight: bold; margin-bottom: 8px;">✅ Credential Issued Successfully!</div>
+                          <div style="font-size: 12px; margin-bottom: 8px;">Hash (click to copy):</div>
+                          <div style="
+                            background: rgba(255,255,255,0.2);
+                            padding: 8px;
+                            border-radius: 4px;
+                            font-family: monospace;
+                            font-size: 11px;
+                            word-break: break-all;
+                            cursor: pointer;
+                            user-select: all;
+                          " onclick="navigator.clipboard.writeText('${hash}'); this.style.background='rgba(255,255,255,0.4)'; setTimeout(() => this.style.background='rgba(255,255,255,0.2)', 200)">${hash}</div>
+                          <div style="font-size: 10px; margin-top: 8px; opacity: 0.8;">Click hash to copy to clipboard</div>
+                        `;
+                        document.body.appendChild(notification);
+                        setTimeout(() => document.body.removeChild(notification), 8000);
+                        
+                        // Clear form
+                        setInstitutionIssueStudentId('');
+                        setInstitutionIssueData('');
                       } catch (err) {
                         setInstitutionError(err.message);
                       } finally {
@@ -731,9 +810,13 @@ function AppContent() {
                           const [studentId, data] = line.split('|').map(s => s.trim());
                           return { studentId, credentialData: data };
                         });
-                        const response = await fetch(`${getApiBaseUrl()}/api/batch/upload`, {
+                        const authHeaders = getAuthHeaders();
+                        const response = await fetch(`${getApiBaseUrl()}/api/institutions/batches`, {
                           method: 'POST',
-                          headers: {'Content-Type': 'application/json'},
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...authHeaders
+                          },
                           body: JSON.stringify({
                             issuerId: institutionIssuerId,
                             batchName: institutionBatchName,
