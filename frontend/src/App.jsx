@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { generateZkpProof, getApiBaseUrl, getStudentProfile, setApiBaseUrl, verifyByHash, verifyZkpProof } from './api.js';
 import { AuthProvider, useAuth } from './auth.jsx';
 import Login from './Login.jsx';
+import Onboarding from './Onboarding.jsx';
 
 function Badge({ label, tone }) {
   const cls = useMemo(() => {
@@ -33,10 +34,23 @@ function formatUnix(ts) {
 }
 
 function AppContent() {
-  const { user, getAuthHeaders, isAuthenticated, logout, loading: authLoading } = useAuth();
+  const { user, getAuthHeaders, isAuthenticated, logout, loading: authLoading, showOnboarding } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [apiBaseUrl, setApiBaseUrlState] = useState(getApiBaseUrl());
   const [tab, setTab] = useState('employer');
+
+  // Set default tab based on user role
+  useMemo(() => {
+    if (user?.role) {
+      if (user.role === 'student') setTab('student');
+      else if (user.role === 'institution') setTab('institution');
+      else if (user.role === 'employer') setTab('employer');
+    }
+  }, [user?.role]);
+
+  // Auto-fill user IDs based on role
+  const autoFillStudentId = user?.role === 'student' ? user.studentId : '';
+  const autoFillIssuerId = user?.role === 'institution' ? user.issuerId : '';
   const [hash, setHash] = useState('');
   const [studentId, setStudentId] = useState('');
   const [issuerId, setIssuerId] = useState('');
@@ -245,43 +259,59 @@ function AppContent() {
       {/* Main Content */}
       <div className="max-w-6xl mx-auto px-4 py-10">
 
-        <div className="mt-5 flex gap-2">
-          <button
-            type="button"
-            onClick={() => setTab('employer')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'employer' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            Employer Verify
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('student')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'student' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            Student Identity
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('institution')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'institution' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            Institution Portal
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('zkp')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'zkp' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            ZKP Tools
-          </button>
+        {/* Role-based tab navigation */}
+        <div className="mt-5 flex gap-2 flex-wrap">
+          {/* Employer tab - visible to all authenticated users for demo purposes */}
+          {isAuthenticated && (
+            <button
+              type="button"
+              onClick={() => setTab('employer')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'employer' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              Employer Verify
+            </button>
+          )}
+          
+          {/* Student tab - only visible to students */}
+          {user?.role === 'student' && (
+            <button
+              type="button"
+              onClick={() => setTab('student')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'student' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              Student Identity
+            </button>
+          )}
+          
+          {/* Institution tab - only visible to institutions */}
+          {user?.role === 'institution' && (
+            <button
+              type="button"
+              onClick={() => setTab('institution')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'institution' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              Institution Portal
+            </button>
+          )}
+          
+          {/* ZKP Tools tab - visible to students and employers */}
+          {user?.role && ['student', 'employer'].includes(user.role) && (
+            <button
+              type="button"
+              onClick={() => setTab('zkp')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'zkp' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              ZKP Tools
+            </button>
+          )}
         </div>
 
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -324,11 +354,15 @@ function AppContent() {
                     <div>
                       <label className="block text-xs text-slate-300 mb-1">Student ID (optional)</label>
                       <input
-                        value={studentId}
+                        value={user?.role === 'student' ? autoFillStudentId : studentId}
                         onChange={(e) => setStudentId(e.target.value)}
-                        className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
+                        disabled={user?.role === 'student'}
+                        className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100 disabled:opacity-50"
                         placeholder="e.g. S12345"
                       />
+                      {user?.role === 'student' && (
+                        <p className="text-xs text-slate-400 mt-1">Auto-filled from your profile</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs text-slate-300 mb-1">Issuer ID (optional)</label>
@@ -989,6 +1023,11 @@ function AppContent() {
       {/* Login Modal */}
       {showLogin && (
         <Login onClose={() => setShowLogin(false)} />
+      )}
+
+      {/* Onboarding Modal */}
+      {showOnboarding && (
+        <Onboarding />
       )}
     </div>
   );

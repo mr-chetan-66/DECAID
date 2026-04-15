@@ -18,6 +18,7 @@ import {
   getIssuerStats,
   updateIssuerStats,
   findResultsByHash,
+  findResultsByStudent,
   getStudentDid,
   createStudentDid
 } from './database.js';
@@ -29,8 +30,18 @@ import {
   optionalAuth,
   generateToken,
   initDemoUsers,
-  authenticateUser
+  authenticateUser,
+  verifyGoogleToken,
+  authenticateGoogleUser,
+  requireRole,
+  requireInstitutionAccess,
+  requireStudentAccess,
+  requireAdmin
 } from './auth.js';
+
+import {
+  updateUserRoleByEmail
+} from './database.js';
 
 const app = express();
 app.use(cors());
@@ -265,34 +276,169 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'backend', ts: new Date().toISOString() });
 });
 
-// Authentication routes
-const LoginRequest = z.object({
-  email: z.string().email(),
-  password: z.string().min(1)
+// Google OAuth authentication routes
+const GoogleAuthRequest = z.object({
+  token: z.string().min(1)
 });
 
-app.post('/api/auth/login', async (req, res) => {
-  const parsed = LoginRequest.safeParse(req.body);
+app.post('/api/auth/google', async (req, res) => {
+  const parsed = GoogleAuthRequest.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ ok: false, error: 'Invalid email or password' });
+    return res.status(400).json({ ok: false, error: 'Invalid Google token' });
   }
 
-  const user = authenticateUser(parsed.data.email, parsed.data.password);
-  if (!user) {
-    return res.status(401).json({ ok: false, error: 'Invalid credentials' });
-  }
+  try {
+    // Check if this is a demo token
+    if (parsed.data.token.startsWith('demo-token-')) {
+      const role = parsed.data.token.split('-')[2];
+      const demoUsers = {
+        institution: {
+          email: 'institution@decaid.com',
+          name: 'Demo Institution',
+          role: 'institution',
+          issuerId: 'DEMO-UNIVERSITY',
+          studentId: null
+        },
+        employer: {
+          email: 'employer@decaid.com',
+          name: 'Demo Employer',
+          role: 'employer',
+          issuerId: null,
+          studentId: null
+        },
+        student: {
+          email: 'student@decaid.com',
+          name: 'Demo Student',
+          role: 'student',
+          issuerId: null,
+          studentId: 'DEMO-STUDENT-001'
+        }
+      };
 
-  const token = generateToken(user);
-  return res.json({
-    ok: true,
-    token,
-    user: {
-      userId: user.userId,
-      email: user.email,
-      role: user.role,
-      issuerId: user.issuerId
+      const demoUser = demoUsers[role];
+      if (!demoUser) {
+        return res.status(400).json({ ok: false, error: 'Invalid demo role' });
+      }
+
+      const user = await authenticateGoogleUser({
+        email: demoUser.email,
+        name: demoUser.name,
+        picture: null,
+        googleId: `demo-google-${role}`
+      });
+
+      // Update user with role-specific data
+      if (role === 'institution') {
+        await updateUserRoleByEmail(user.email, { issuerId: demoUser.issuerId });
+      } else if (role === 'student') {
+        await updateUserRoleByEmail(user.email, { studentId: demoUser.studentId });
+      } else {
+        await updateUserRoleByEmail(user.email, { role: demoUser.role });
+      }
+
+      // Get updated user data
+      const updatedUser = await getUserByEmail(user.email);
+      const token = generateToken({
+        userId: updatedUser.user_id,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        issuerId: updatedUser.issuer_id,
+        studentId: updatedUser.student_id
+      });
+
+      return res.json({
+        ok: true,
+        token,
+        user: {
+          userId: updatedUser.user_id,
+          email: updatedUser.email,
+          name: updatedUser.name,
+          picture: updatedUser.picture,
+          role: updatedUser.role,
+          issuerId: updatedUser.issuer_id,
+          studentId: updatedUser.student_id,
+          needsOnboarding: false
+        }
+      });
     }
-  });
+
+    // Real Google OAuth flow
+    const googleData = await verifyGoogleToken(parsed.data.token);
+    const user = await authenticateGoogleUser(googleData);
+    const token = generateToken(user);
+    
+    return res.json({
+      ok: true,
+      token,
+      user: {
+        userId: user.userId,
+        email: user.email,
+        name: user.name,
+        picture: user.picture,
+        role: user.role,
+        issuerId: user.issuerId,
+        studentId: user.studentId,
+        needsOnboarding: user.needsOnboarding
+      }
+    });
+  } catch (error) {
+    return res.status(401).json({ ok: false, error: error.message });
+  }
+});
+
+const RoleOnboardingRequest = z.object({
+  role: z.enum(['student', 'institution', 'employer']),
+  issuerId: z.string().optional(),
+  studentId: z.string().optional()
+});
+
+app.post('/api/auth/onboarding', authenticateToken, async (req, res) => {
+  const parsed = RoleOnboardingRequest.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  const { role, issuerId, studentId } = parsed.data;
+  
+  // Validate role-specific requirements
+  if (role === 'institution' && !issuerId) {
+    return res.status(400).json({ ok: false, error: 'Issuer ID required for institution role' });
+  }
+  
+  if (role === 'student' && !studentId) {
+    return res.status(400).json({ ok: false, error: 'Student ID required for student role' });
+  }
+
+  try {
+    const updatedUser = await updateUserRoleByEmail(req.user.email, {
+      role,
+      issuerId: role === 'institution' ? issuerId : null,
+      studentId: role === 'student' ? studentId : null
+    });
+
+    const newToken = generateToken({
+      userId: updatedUser.user_id,
+      email: updatedUser.email,
+      role: updatedUser.role,
+      issuerId: updatedUser.issuer_id,
+      studentId: updatedUser.student_id
+    });
+
+    return res.json({
+      ok: true,
+      token: newToken,
+      user: {
+        userId: updatedUser.user_id,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        issuerId: updatedUser.issuer_id,
+        studentId: updatedUser.student_id,
+        needsOnboarding: false
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'Failed to update user role' });
+  }
 });
 
 app.get('/api/auth/me', authenticateToken, (req, res) => {
@@ -300,14 +446,16 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
     ok: true,
     user: {
       userId: req.user.userId,
+      email: req.user.email,
       role: req.user.role,
-      issuerId: req.user.issuerId
+      issuerId: req.user.issuerId,
+      studentId: req.user.studentId
     }
   });
 });
 
-// Blockchain issuer management
-app.post('/api/blockchain/authorize-issuer', strictLimiter, authenticateToken, async (req, res) => {
+// Blockchain issuer management - Admin only
+app.post('/api/blockchain/authorize-issuer', strictLimiter, authenticateToken, requireAdmin, async (req, res) => {
   const { issuerAddress } = req.body;
   
   if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
@@ -329,7 +477,7 @@ app.post('/api/blockchain/authorize-issuer', strictLimiter, authenticateToken, a
   }
 });
 
-app.post('/api/blockchain/deauthorize-issuer', strictLimiter, authenticateToken, async (req, res) => {
+app.post('/api/blockchain/deauthorize-issuer', strictLimiter, authenticateToken, requireAdmin, async (req, res) => {
   const { issuerAddress } = req.body;
   
   if (!issuerAddress || !ethers.isAddress(issuerAddress)) {
@@ -445,10 +593,15 @@ const CreateBatchRequest = z.object({
   credentials: z.array(BatchCredential).min(1).max(500)
 });
 
-app.post('/api/institutions/batches', strictLimiter, authenticateToken, async (req, res) => {
+app.post('/api/institutions/batches', strictLimiter, authenticateToken, requireInstitutionAccess, async (req, res) => {
   const parsed = CreateBatchRequest.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  // Ensure user can only create batches for their own institution
+  if (parsed.data.issuerId !== req.user.issuerId) {
+    return res.status(403).json({ ok: false, error: 'Access denied: Cannot create batches for other institutions' });
   }
 
   const batchId = parsed.data.batchId || crypto.randomUUID();
@@ -463,7 +616,7 @@ app.post('/api/institutions/batches', strictLimiter, authenticateToken, async (r
   if (useDatabase) {
     await createBatch({
       batchId,
-      issuerId: parsed.data.issuerId,
+      issuerId: req.user.issuerId,
       startedAt,
       totalCount: parsed.data.credentials.length
     });
@@ -655,16 +808,14 @@ app.get('/api/issuers', async (req, res) => {
   return res.json({ ok: true, issuers: Array.from(issuerStats.values()) });
 });
 
-app.post('/api/students/:studentId/did', async (req, res) => {
-  const studentId = String(req.params.studentId || '').trim();
-  if (!studentId) return res.status(400).json({ ok: false, error: 'studentId required' });
+app.post('/api/students/:studentId/did', authenticateToken, requireStudentAccess, async (req, res) => {
+  const studentId = req.user.studentId; // Use authenticated user's student ID
   const did = await getOrCreateStudentDid(studentId);
   return res.json({ ok: true, studentId, did });
 });
 
-app.get('/api/students/:studentId/profile', async (req, res) => {
-  const studentId = String(req.params.studentId || '').trim();
-  if (!studentId) return res.status(400).json({ ok: false, error: 'studentId required' });
+app.get('/api/students/:studentId/profile', authenticateToken, requireStudentAccess, async (req, res) => {
+  const studentId = req.user.studentId; // Use authenticated user's student ID
 
   const did = await getOrCreateStudentDid(studentId);
   const aiUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
@@ -942,10 +1093,15 @@ const IssueRequest = z.object({
   batchId: z.string().optional()
 });
 
-app.post('/api/credentials/issue', strictLimiter, authenticateToken, async (req, res) => {
+app.post('/api/credentials/issue', strictLimiter, authenticateToken, requireInstitutionAccess, async (req, res) => {
   const parsed = IssueRequest.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  // Ensure institution can only issue credentials for their own issuer ID
+  if (parsed.data.issuerId !== req.user.issuerId) {
+    return res.status(403).json({ ok: false, error: 'Access denied: Cannot issue credentials for other institutions' });
   }
 
   const credentialHashHex = sha256Hex(parsed.data.credentialData);
@@ -980,7 +1136,7 @@ const RevokeRequest = z.object({
   credentialHash: z.string().regex(/^[0-9a-fA-F]{64}$/)
 });
 
-app.post('/api/credentials/revoke', strictLimiter, authenticateToken, async (req, res) => {
+app.post('/api/credentials/revoke', strictLimiter, authenticateToken, requireInstitutionAccess, async (req, res) => {
   const parsed = RevokeRequest.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ ok: false, error: parsed.error.flatten() });
@@ -991,6 +1147,12 @@ app.post('/api/credentials/revoke', strictLimiter, authenticateToken, async (req
     return res.status(400).json({ ok: false, error: 'Invalid hash' });
   }
 
+  // Ensure institution can only revoke their own credentials
+  const credentialIssuerId = await findIssuerIdByHash(hash);
+  if (!credentialIssuerId || credentialIssuerId !== req.user.issuerId) {
+    return res.status(403).json({ ok: false, error: 'Access denied: Cannot revoke credentials from other institutions' });
+  }
+
   const credentialHashBytes32 = ethers.hexlify(ethers.getBytes('0x' + hash));
 
   try {
@@ -998,14 +1160,11 @@ app.post('/api/credentials/revoke', strictLimiter, authenticateToken, async (req
     const tx = await registry.revoke(credentialHashBytes32);
     const receipt = await tx.wait();
 
-    const issuerId = await findIssuerIdByHash(hash);
-    if (issuerId) {
-      const istats = await getOrInitIssuerStats(issuerId);
-      if (istats) {
-        await saveIssuerStats(issuerId, {
-          totalRevocations: istats.totalRevocations + 1
-        });
-      }
+    const istats = await getOrInitIssuerStats(req.user.issuerId);
+    if (istats) {
+      await saveIssuerStats(req.user.issuerId, {
+        totalRevocations: istats.totalRevocations + 1
+      });
     }
 
     return res.json({ ok: true, txHash: receipt?.hash || tx.hash });

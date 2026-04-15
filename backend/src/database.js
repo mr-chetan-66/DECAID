@@ -70,6 +70,33 @@ export async function initDatabase() {
       )
     `);
 
+    // Users table for Google OAuth authentication
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email VARCHAR(255) UNIQUE NOT NULL,
+        name VARCHAR(255),
+        picture TEXT,
+        google_id VARCHAR(255) UNIQUE,
+        role VARCHAR(50) NOT NULL DEFAULT 'pending',
+        issuer_id VARCHAR(255),
+        student_id VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT valid_role CHECK (role IN ('student', 'institution', 'employer', 'admin', 'pending'))
+      )
+    `);
+
+    // Insert demo users if they don't exist
+    await client.query(`
+      INSERT INTO users (email, name, role, issuer_id, student_id) 
+      VALUES 
+        ('institution@decaid.com', 'Demo Institution', 'institution', 'DEMO-UNIVERSITY', NULL),
+        ('employer@decaid.com', 'Demo Employer', 'employer', NULL, NULL),
+        ('student@decaid.com', 'Demo Student', 'student', NULL, 'DEMO-STUDENT-001')
+      ON CONFLICT (email) DO NOTHING
+    `);
+
     console.log('Database initialized successfully');
   } catch (err) {
     console.error('Database initialization error:', err);
@@ -216,6 +243,61 @@ export async function createStudentDid(studentId) {
     const existing = await getStudentDid(studentId);
     return existing;
   }
+}
+
+// User management functions
+export async function getUserByEmail(email) {
+  const result = await pool.query(
+    'SELECT * FROM users WHERE email = $1',
+    [email]
+  );
+  return result.rows[0] || null;
+}
+
+export async function createUser(userData) {
+  const { email, name, picture, googleId, role, issuerId, studentId } = userData;
+  const result = await pool.query(
+    `INSERT INTO users (email, name, picture, google_id, role, issuer_id, student_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [email, name, picture, googleId, role, issuerId, studentId]
+  );
+  return result.rows[0];
+}
+
+export async function updateUserRole(userId, updates) {
+  const setClause = Object.keys(updates)
+    .map((key, i) => `${key.replace(/([A-Z])/g, '_$1').toLowerCase()} = $${i + 2}`)
+    .join(', ');
+  const values = [userId, ...Object.values(updates)];
+  
+  const result = await pool.query(
+    `UPDATE users SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = $1 RETURNING *`,
+    values
+  );
+  return result.rows[0];
+}
+
+export async function updateUserRoleByEmail(email, updates) {
+  const setClause = Object.keys(updates)
+    .map((key, i) => `${key.replace(/([A-Z])/g, '_$1').toLowerCase()} = $${i + 2}`)
+    .join(', ');
+  const values = [email, ...Object.values(updates)];
+  
+  const result = await pool.query(
+    `UPDATE users SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+     WHERE email = $1 RETURNING *`,
+    values
+  );
+  return result.rows[0];
+}
+
+export async function getAllUsers() {
+  const result = await pool.query(
+    'SELECT user_id, email, name, role, issuer_id, student_id, created_at FROM users ORDER BY created_at DESC'
+  );
+  return result.rows;
 }
 
 // For migration from in-memory to DB

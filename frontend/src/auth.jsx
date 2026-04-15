@@ -15,6 +15,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('DECAID_TOKEN'));
   const [loading, setLoading] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -35,6 +36,11 @@ export function AuthProvider({ children }) {
       if (response.ok) {
         const data = await response.json();
         setUser(data.user);
+        
+        // Check if user needs onboarding
+        if (data.user.role === 'pending') {
+          setShowOnboarding(true);
+        }
       } else {
         // Token invalid, clear it
         logout();
@@ -47,14 +53,14 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const login = async (email, password) => {
+  const googleLogin = async (googleToken) => {
     try {
-      const response = await fetch(`${getApiBaseUrl()}/api/auth/login`, {
+      const response = await fetch(`${getApiBaseUrl()}/api/auth/google`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ token: googleToken })
       });
 
       const data = await response.json();
@@ -63,6 +69,41 @@ export function AuthProvider({ children }) {
         setToken(data.token);
         setUser(data.user);
         localStorage.setItem('DECAID_TOKEN', data.token);
+        
+        // Show onboarding if needed
+        if (data.user.needsOnboarding) {
+          setShowOnboarding(true);
+          return { success: true, needsOnboarding: true };
+        }
+        
+        return { success: true };
+      } else {
+        return { success: false, error: data.error };
+      }
+    } catch (error) {
+      return { success: false, error: 'Network error' };
+    }
+  };
+
+  const completeOnboarding = async (roleData) => {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/auth/onboarding`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(roleData)
+      });
+
+      const data = await response.json();
+      
+      if (response.ok) {
+        // Update token and user data
+        setToken(data.token);
+        setUser(data.user);
+        localStorage.setItem('DECAID_TOKEN', data.token);
+        setShowOnboarding(false);
         return { success: true };
       } else {
         return { success: false, error: data.error };
@@ -75,6 +116,7 @@ export function AuthProvider({ children }) {
   const logout = () => {
     setUser(null);
     setToken(null);
+    setShowOnboarding(false);
     localStorage.removeItem('DECAID_TOKEN');
   };
 
@@ -82,14 +124,24 @@ export function AuthProvider({ children }) {
     return token ? { 'Authorization': `Bearer ${token}` } : {};
   };
 
+  // Legacy login for backward compatibility
+  const login = async (email, password) => {
+    console.warn('Legacy email/password login is deprecated');
+    return { success: false, error: 'Please use Google sign-in instead' };
+  };
+
   const value = {
     user,
     token,
     loading,
     login,
+    googleLogin,
     logout,
+    completeOnboarding,
     getAuthHeaders,
-    isAuthenticated: !!user
+    isAuthenticated: !!user,
+    showOnboarding,
+    setShowOnboarding
   };
 
   return (
