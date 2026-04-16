@@ -61,7 +61,7 @@ import {
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-app.use(limiter); // Apply rate limiting to all requests
+// app.use(limiter); // Rate limiting disabled
 
 // Configure multer for file uploads
 const upload = multer({
@@ -1055,35 +1055,6 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
   const aiUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
   const credentialHashBytes32 = ethers.hexlify(ethers.getBytes('0x' + h));
 
-  let chain = null;
-  try {
-    const registry = getRegistry();
-    const [exists, issuerAddress, issuedAt, revoked] = await registry.verify(credentialHashBytes32);
-    chain = {
-      exists,
-      issuerAddress,
-      issuedAt: Number(issuedAt),
-      revoked
-    };
-    
-    // If credential doesn't exist on blockchain, return early without risk calculation
-    if (!exists) {
-      return res.json({
-        ok: true,
-        credentialHash: h,
-        ipfsCid,
-        blockchain: chain,
-        risk: { ok: false, error: 'Credential not found on blockchain' },
-        trustRank: 0,
-        trustSignals: [],
-        duplicateDetected: false,
-        zkp: { status: 'not_provided' }
-      });
-    }
-  } catch (e) {
-    return res.status(502).json({ ok: false, error: `Blockchain unavailable: ${String(e?.message || e)}` });
-  }
-
   const issuerId = q.data.issuerId || null;
   const studentId = q.data.studentId || null;
 
@@ -1103,6 +1074,21 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
         break;
       }
     }
+  }
+
+  let chain = null;
+  try {
+    const registry = getRegistry();
+    const [exists, issuerAddress, issuedAt, revoked] = await registry.verify(credentialHashBytes32);
+    chain = {
+      exists,
+      issuerAddress,
+      issuedAt: Number(issuedAt),
+      revoked
+    };
+
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: `Blockchain unavailable: ${String(e?.message || e)}` });
   }
 
   // Calculate risk score - use provided IDs or try to find from batch data
@@ -1182,7 +1168,8 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
         
         // Check for duplicate hash
         const duplicateDetected = await isDuplicateHashInBatches(h);
-        
+        console.log(`[Duplicate Check] Hash: ${h.substring(0, 8)}..., DuplicateDetected: ${duplicateDetected}`);
+
         // Check for content duplicate (same credential data issued to different students)
         let contentDuplicateDetected = false;
         if (useDatabase) {
@@ -1199,19 +1186,22 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
         // Get batch size if available
         const batchSize = 1; // Default to individual issuance
         
+        const duplicateFlag = duplicateDetected || contentDuplicateDetected ? 1 : 0;
+        console.log(`[AI Service Request] duplicateFlag: ${duplicateFlag}, duplicateDetected: ${duplicateDetected}, contentDuplicateDetected: ${contentDuplicateDetected}`);
+
         const r = await fetch(`${aiUrl}/score`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ 
-            studentId: effectiveStudentId, 
-            issuerId: effectiveIssuerId, 
+          body: JSON.stringify({
+            studentId: effectiveStudentId,
+            issuerId: effectiveIssuerId,
             credentialHash: h,
             batchId: 'verification-batch',
             issuerTrustScore,
             credentialCount,
             studentCredentialCount,
             timeGap,
-            duplicateFlag: duplicateDetected || contentDuplicateDetected ? 1 : 0,
+            duplicateFlag,
             batchSize
           })
         });
@@ -1297,31 +1287,33 @@ app.post('/api/credentials/issue', async (req, res) => {
   const credentialHashBytes32 = ethers.hexlify(ethers.getBytes('0x' + credentialHashHex));
 
   try {
+    // Duplicate checks removed for testing duplicate score detection
     // Check if credential already exists in database (before blockchain check)
-    if (useDatabase) {
-      const existingResults = await findResultsByHash(credentialHashHex);
-      if (existingResults.length > 0) {
-        return res.status(409).json({
-          ok: false,
-          error: "Credential already exists in database",
-          code: "ALREADY_ISSUED",
-          credentialHash: credentialHashHex,
-          duplicate: true
-        });
-      }
-    }
-    
+    // if (useDatabase) {
+    //   const existingResults = await findResultsByHash(credentialHashHex);
+    //   if (existingResults.length > 0) {
+    //     return res.status(409).json({
+    //       ok: false,
+    //       error: "Credential already exists in database",
+    //       code: "ALREADY_ISSUED",
+    //       credentialHash: credentialHashHex,
+    //       duplicate: true
+    //     });
+    //   }
+    // }
+
     // Check if credential already exists on blockchain
     const registry = getRegistry();
     const [exists] = await registry.verify(credentialHashBytes32);
     if (exists) {
-      return res.status(409).json({
-        ok: false,
-        error: "Credential already exists on blockchain",
-        code: "ALREADY_ISSUED",
-        credentialHash: credentialHashHex,
-        duplicate: true
-      });
+      // Allow re-issuing for testing - will be caught by duplicate detection in risk scoring
+      // return res.status(409).json({
+      //   ok: false,
+      //   error: "Credential already exists on blockchain",
+      //   code: "ALREADY_ISSUED",
+      //   credentialHash: credentialHashHex,
+      //   duplicate: true
+      // });
     }
 
     const tx = await registry.issue(credentialHashBytes32);

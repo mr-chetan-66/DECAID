@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { generateZkpProof, getApiBaseUrl, getStudentProfile, setApiBaseUrl, verifyByHash, verifyZkpProof } from './api.js';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import LoginPage from './pages/LoginPage';
 
 function Badge({ label, tone }) {
   const cls = useMemo(() => {
@@ -411,9 +413,14 @@ function AdminDashboard({
   );
 }
 
-function AppContent() {
+function AppContent({ user, onLogout }) {
   const [apiBaseUrl, setApiBaseUrlState] = useState(getApiBaseUrl());
-  const [tab, setTab] = useState('employer');
+  const [tab, setTab] = useState(() => {
+    if (user.role === 'student') return 'student';
+    if (user.role === 'institution') return 'institution';
+    if (user.role === 'employer') return 'employer';
+    return 'employer'; // default for admin
+  });
   const [hash, setHash] = useState('');
   const [studentId, setStudentId] = useState('');
   const [issuerId, setIssuerId] = useState('');
@@ -644,7 +651,15 @@ function AppContent() {
             <div className="flex items-center space-x-4">
               <h1 className="text-xl font-bold text-white">DECAID</h1>
               <span className="text-xs text-slate-400">Decentralized Academic Identity</span>
+              <span className="text-xs text-slate-500">|</span>
+              <span className="text-xs text-slate-400">Logged in as: {user?.username} ({user?.role})</span>
             </div>
+            <button
+              onClick={onLogout}
+              className="rounded-xl px-4 py-2 text-sm font-semibold ring-1 ring-white/10 bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
+            >
+              Logout
+            </button>
           </div>
         </div>
       </div>
@@ -654,55 +669,65 @@ function AppContent() {
 
         {/* Tab navigation */}
         <div className="mt-5 flex gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setTab('employer')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'employer' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            Employer Verify
-          </button>
+          {(user.role === 'employer' || user.role === 'admin') && (
+            <button
+              type="button"
+              onClick={() => setTab('employer')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'employer' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              Employer Verify
+            </button>
+          )}
           
-          <button
-            type="button"
-            onClick={() => setTab('student')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'student' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            Student Identity
-          </button>
+          {(user.role === 'student' || user.role === 'admin') && (
+            <button
+              type="button"
+              onClick={() => setTab('student')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'student' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              Student Identity
+            </button>
+          )}
           
-          <button
-            type="button"
-            onClick={() => setTab('institution')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'institution' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            Institution Portal
-          </button>
+          {(user.role === 'institution' || user.role === 'admin') && (
+            <button
+              type="button"
+              onClick={() => setTab('institution')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'institution' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              Institution Portal
+            </button>
+          )}
           
-          <button
-            type="button"
-            onClick={() => setTab('zkp')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'zkp' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            ZKP Tools
-          </button>
-          
-          <button
-            type="button"
-            onClick={() => setTab('admin')}
-            className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-              tab === 'admin' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-            }`}
-          >
-            Admin Dashboard
-          </button>
+          {user.role === 'admin' && (
+            <button
+              type="button"
+              onClick={() => setTab('zkp')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'zkp' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              ZKP Tools
+            </button>
+          )}
+
+          {user.role === 'admin' && (
+            <button
+              type="button"
+              onClick={() => setTab('admin')}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
+                tab === 'admin' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
+              }`}
+            >
+              Admin Dashboard
+            </button>
+          )}
         </div>
 
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -1733,5 +1758,27 @@ function AppContent() {
 }
 
 export default function App() {
-  return <AppContent />;
+  return (
+    <AuthProvider>
+      <AuthenticatedApp />
+    </AuthProvider>
+  );
+}
+
+function AuthenticatedApp() {
+  const { user, logout, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-white">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  return <AppContent user={user} onLogout={logout} />;
 }

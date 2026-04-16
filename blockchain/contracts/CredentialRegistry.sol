@@ -46,9 +46,11 @@ contract CredentialRegistry {
 
     function issue(bytes32 credentialHash) external onlyAuthorized {
         require(credentialHash != bytes32(0), "hash required");
-        Credential storage c = credentials[credentialHash];
-        require(c.credentialHash == bytes32(0), "already issued");
+        // Duplicate check removed for testing duplicate score detection
+        // Credential storage c = credentials[credentialHash];
+        // require(c.credentialHash == bytes32(0), "already issued");
 
+        Credential storage c = credentials[credentialHash];
         credentials[credentialHash] = Credential({
             credentialHash: credentialHash,
             issuer: msg.sender,
