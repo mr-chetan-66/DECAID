@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { generateZkpProof, getApiBaseUrl, getStudentProfile, setApiBaseUrl, verifyByHash, verifyZkpProof } from './api.js';
+import { generateZkpProof, getApiBaseUrl, getStudentProfile, setApiBaseUrl, verifyByHash, verifyZkpProof, verifyZkpByCommitment, storeZkpCommitment, revokeCredential } from './api.js';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
 
@@ -451,6 +451,13 @@ function AppContent({ user, onLogout }) {
   const [zkpVerifyError, setZkpVerifyError] = useState('');
   const [zkpVerifyResult, setZkpVerifyResult] = useState(null);
 
+  // Commitment-only verification state
+  const [zkpCommitmentOnlyNonce, setZkpCommitmentOnlyNonce] = useState('');
+  const [zkpCommitmentOnlyCommitment, setZkpCommitmentOnlyCommitment] = useState('');
+  const [zkpCommitmentOnlyLoading, setZkpCommitmentOnlyLoading] = useState(false);
+  const [zkpCommitmentOnlyError, setZkpCommitmentOnlyError] = useState('');
+  const [zkpCommitmentOnlyResult, setZkpCommitmentOnlyResult] = useState(null);
+
   // Institution state
   const [institutionLoading, setInstitutionLoading] = useState(false);
   const [institutionError, setInstitutionError] = useState('');
@@ -460,9 +467,11 @@ function AppContent({ user, onLogout }) {
   const [institutionDocument, setInstitutionDocument] = useState(null);
   const [institutionIssueStudentId, setInstitutionIssueStudentId] = useState('');
   const [institutionIssueData, setInstitutionIssueData] = useState('');
+  const [institutionGenerateZkp, setInstitutionGenerateZkp] = useState(false);
   const [institutionStats, setInstitutionStats] = useState(null);
   const [institutionBatches, setInstitutionBatches] = useState([]);
   const [institutionStudents, setInstitutionStudents] = useState([]);
+  const [institutionCredentialsList, setInstitutionCredentialsList] = useState([]);
   const [institutionActivity, setInstitutionActivity] = useState([]);
 
   // Admin Dashboard state
@@ -556,6 +565,18 @@ function AppContent({ user, onLogout }) {
     try {
       const out = await generateZkpProof({ credentialHash: h, studentId: sid, nonce: zkpNonce.trim() || undefined });
       setZkpProof(out);
+
+      // Automatically store the commitment for later verification
+      try {
+        await storeZkpCommitment({
+          credentialHash: h,
+          studentId: sid,
+          commitment: out.commitment,
+          nonce: out.nonce
+        });
+      } catch (storeErr) {
+        console.warn('Failed to store commitment:', storeErr);
+      }
     } catch (err) {
       setZkpError(err?.message || 'Failed to generate ZKP proof');
     } finally {
@@ -600,10 +621,56 @@ function AppContent({ user, onLogout }) {
     }
   }
 
+  async function onVerifyZkpByCommitment(e) {
+    e.preventDefault();
+    setZkpCommitmentOnlyError('');
+    setZkpCommitmentOnlyResult(null);
+
+    const commitment = zkpCommitmentOnlyCommitment.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(commitment)) {
+      setZkpCommitmentOnlyError('Enter a valid 64-hex commitment.');
+      return;
+    }
+    const nonce = zkpCommitmentOnlyNonce.trim();
+    if (!nonce) {
+      setZkpCommitmentOnlyError('Enter the nonce.');
+      return;
+    }
+
+    setZkpCommitmentOnlyLoading(true);
+    try {
+      const out = await verifyZkpByCommitment({ commitment, nonce });
+      setZkpCommitmentOnlyResult(out);
+    } catch (err) {
+      setZkpCommitmentOnlyError(err?.message || 'Failed to verify ZKP proof');
+    } finally {
+      setZkpCommitmentOnlyLoading(false);
+    }
+  }
+
   function onSaveApiBaseUrl() {
     const v = apiBaseUrl.trim();
     setApiBaseUrl(v);
     setApiBaseUrlState(getApiBaseUrl());
+  }
+
+  async function onRevokeCredential(credentialHash) {
+    if (!confirm('Are you sure you want to revoke this credential? This action cannot be undone.')) {
+      return;
+    }
+
+    setInstitutionLoading(true);
+    setInstitutionError('');
+    try {
+      await revokeCredential({ credentialHash });
+      alert('Credential revoked successfully');
+      // Reload institution data to show updated status
+      await loadInstitutionData(institutionIssuerId);
+    } catch (err) {
+      setInstitutionError(err?.message || 'Failed to revoke credential');
+    } finally {
+      setInstitutionLoading(false);
+    }
   }
 
   async function loadInstitutionData(issuerId) {
@@ -620,13 +687,21 @@ function AppContent({ user, onLogout }) {
       const credsRes = await fetch(`${getApiBaseUrl()}/api/admin/credentials`);
       if (credsRes.ok) {
         const credsData = await credsRes.json();
+        console.log('[Load Institution Data] Credentials response:', credsData);
         const issuerStudents = {};
+        const issuerCredentials = [];
         (credsData.credentials || []).forEach(c => {
+          console.log('[Load Institution Data] Processing credential:', c);
           if (c.issuer_id === issuerId && c.student_id) {
             issuerStudents[c.student_id] = (issuerStudents[c.student_id] || 0) + 1;
+            issuerCredentials.push(c);
           }
         });
+        console.log('[Load Institution Data] Filtered credentials:', issuerCredentials);
         setInstitutionStudents(Object.entries(issuerStudents).map(([studentId, count]) => ({ studentId, count })));
+        setInstitutionCredentialsList(issuerCredentials);
+      } else {
+        console.error('[Load Institution Data] Failed to fetch credentials:', credsRes.status);
       }
 
       // Simulate activity log
@@ -888,67 +963,57 @@ function AppContent({ user, onLogout }) {
 
                   <div className="border-t border-white/10 pt-4 mt-2">
                     <div className="text-sm text-slate-300 mb-3">
-                      Verify a ZKP proof without accessing the original credential data.
+                      <strong>Privacy-Preserving Verification</strong>
+                      <div className="text-xs text-slate-400 mt-1">Verify using only commitment + nonce - employer never sees credential hash or student ID</div>
                     </div>
-                    <form onSubmit={onVerifyZkp} className="flex flex-col gap-3">
+                    <form onSubmit={onVerifyZkpByCommitment} className="flex flex-col gap-3">
                       <div>
-                        <label className="block text-xs text-slate-300 mb-1">Credential Hash</label>
+                        <label className="block text-xs text-slate-300 mb-1">Commitment</label>
                         <input
-                          value={zkpVerifyHash}
-                          onChange={(e) => setZkpVerifyHash(e.target.value)}
+                          value={zkpCommitmentOnlyCommitment}
+                          onChange={(e) => setZkpCommitmentOnlyCommitment(e.target.value)}
                           className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          placeholder="64-hex hash"
+                          placeholder="64-hex commitment from student"
                           spellCheck={false}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Student ID</label>
-                        <input
-                          value={zkpVerifyStudentId}
-                          onChange={(e) => setZkpVerifyStudentId(e.target.value)}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          placeholder="e.g. S12345"
                         />
                       </div>
                       <div>
                         <label className="block text-xs text-slate-300 mb-1">Nonce</label>
                         <input
-                          value={zkpVerifyNonce}
-                          onChange={(e) => setZkpVerifyNonce(e.target.value)}
+                          value={zkpCommitmentOnlyNonce}
+                          onChange={(e) => setZkpCommitmentOnlyNonce(e.target.value)}
                           className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          placeholder="Proof nonce"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Commitment</label>
-                        <input
-                          value={zkpVerifyCommitment}
-                          onChange={(e) => setZkpVerifyCommitment(e.target.value)}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          placeholder="64-hex commitment"
-                          spellCheck={false}
+                          placeholder="Nonce from student (revealed privately)"
                         />
                       </div>
                       <button
-                        disabled={zkpVerifyLoading}
-                        className="rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
+                        disabled={zkpCommitmentOnlyLoading}
+                        className="rounded-xl bg-purple-500 hover:bg-purple-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
                       >
-                        {zkpVerifyLoading ? 'Verifying...' : 'Verify ZKP Proof'}
+                        {zkpCommitmentOnlyLoading ? 'Verifying...' : 'Verify by Commitment'}
                       </button>
-                      {zkpVerifyError ? <div className="text-sm text-rose-200">{zkpVerifyError}</div> : null}
+                      {zkpCommitmentOnlyError ? <div className="text-sm text-rose-200">{zkpCommitmentOnlyError}</div> : null}
                     </form>
 
-                    {zkpVerifyResult && (
-                      <div className={`mt-2 p-3 rounded-xl ${zkpVerifyResult.valid ? 'bg-emerald-950/30 ring-1 ring-emerald-500/30' : 'bg-rose-950/30 ring-1 ring-rose-500/30'}`}>
-                        <Badge 
-                          label={zkpVerifyResult.valid ? 'ZKP Valid' : 'ZKP Invalid'} 
-                          tone={zkpVerifyResult.valid ? 'green' : 'red'} 
+                    {zkpCommitmentOnlyResult && (
+                      <div className={`mt-2 p-3 rounded-xl ${zkpCommitmentOnlyResult.valid ? 'bg-emerald-950/30 ring-1 ring-emerald-500/30' : 'bg-rose-950/30 ring-1 ring-rose-500/30'}`}>
+                        <Badge
+                          label={zkpCommitmentOnlyResult.valid ? 'Valid' : 'Invalid'}
+                          tone={zkpCommitmentOnlyResult.valid ? 'green' : 'red'}
                         />
                         <div className="mt-2 text-xs text-slate-300">
-                          {zkpVerifyResult.valid 
-                            ? 'The proof is valid. The prover knows the credential without revealing it.' 
-                            : 'The proof is invalid. The commitment does not match.'}
+                          {zkpCommitmentOnlyResult.valid
+                            ? 'Credential verified on blockchain. Proof is valid.'
+                            : 'Invalid proof or commitment not found.'}
                         </div>
+                        {zkpCommitmentOnlyResult.blockchain && (
+                          <div className="mt-2 text-xs text-slate-400">
+                            <div>On-chain: {zkpCommitmentOnlyResult.blockchain.exists ? 'Yes' : 'No'}</div>
+                            {zkpCommitmentOnlyResult.blockchain.issuerAddress && (
+                              <div>Issuer: {zkpCommitmentOnlyResult.blockchain.issuerAddress.substring(0, 10)}...</div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1536,120 +1601,178 @@ function AppContent({ user, onLogout }) {
                         {institutionLoading ? 'Loading...' : 'View Stats'}
                       </button>
                     </form>
-                    
-                    {institutionStats && (
-                      <div className="mt-3 p-3 rounded-xl bg-slate-950/30 ring-1 ring-white/10">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-slate-200">{institutionStats.totalIssuedAttempts || 0}</div>
-                            <div className="text-xs text-slate-500">Total Issued</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-emerald-400">{((institutionStats.chainSuccessRate || 0) * 100).toFixed(0)}%</div>
-                            <div className="text-xs text-slate-500">Success Rate</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-slate-200">{(institutionStats.avgRisk || 0).toFixed(0)}</div>
-                            <div className="text-xs text-slate-500">Avg Risk</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-rose-400">{institutionStats.revocations || 0}</div>
-                            <div className="text-xs text-slate-500">Revocations</div>
-                          </div>
+                  </div>
+
+                  {/* Load Credentials for Revocation */}
+                  <div className="border-t border-white/10 pt-4">
+                    <h4 className="text-sm font-semibold text-slate-200 mb-3">Manage Credentials (Revoke)</h4>
+                    <div className="flex gap-2">
+                      <input
+                        value={institutionIssuerId}
+                        onChange={(e) => setInstitutionIssuerId(e.target.value)}
+                        className="flex-1 rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
+                        placeholder="UNI-DEMO"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!institutionIssuerId) {
+                            alert('Please enter an Issuer ID');
+                            return;
+                          }
+                          setInstitutionLoading(true);
+                          setInstitutionError('');
+                          try {
+                            await loadInstitutionData(institutionIssuerId);
+                          } catch (err) {
+                            setInstitutionError(err.message);
+                          } finally {
+                            setInstitutionLoading(false);
+                          }
+                        }}
+                        disabled={institutionLoading}
+                        className="rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
+                      >
+                        {institutionLoading ? 'Loading...' : 'Load Credentials'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {institutionStats && (
+                    <div className="mt-3 p-3 rounded-xl bg-slate-950/30 ring-1 ring-white/10">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-slate-200">{institutionStats.totalIssuedAttempts || 0}</div>
+                          <div className="text-xs text-slate-500">Total Issued</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-emerald-400">{((institutionStats.chainSuccessRate || 0) * 100).toFixed(0)}%</div>
+                          <div className="text-xs text-slate-500">Success Rate</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-slate-200">{(institutionStats.avgRisk || 0).toFixed(0)}</div>
+                          <div className="text-xs text-slate-500">Avg Risk</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-rose-400">{institutionStats.revocations || 0}</div>
+                          <div className="text-xs text-slate-500">Revocations</div>
                         </div>
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {/* Enhanced Institution Dashboard Sections */}
-                    {institutionStats && (
-                      <div className="mt-6 space-y-6">
-                        {/* Batch History */}
-                        {institutionBatches.length > 0 && (
-                          <div>
-                            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Batch History</h4>
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr className="text-left border-b border-white/10">
-                                    <th className="pb-2 text-slate-300">Batch Name</th>
-                                    <th className="pb-2 text-slate-300">Status</th>
-                                    <th className="pb-2 text-slate-300">Credentials</th>
-                                    <th className="pb-2 text-slate-300">Created</th>
+                  {/* Enhanced Institution Dashboard Sections */}
+                  {institutionStats && (
+                    <div className="mt-6 space-y-6">
+                      {/* Batch History */}
+                      {institutionBatches.length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Batch History</h4>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-left border-b border-white/10">
+                                  <th className="pb-2 text-slate-300">Batch Name</th>
+                                  <th className="pb-2 text-slate-300">Status</th>
+                                  <th className="pb-2 text-slate-300">Credentials</th>
+                                  <th className="pb-2 text-slate-300">Created</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {institutionBatches.map((b) => (
+                                  <tr key={b.batch_id || b.id} className="border-b border-white/5">
+                                    <td className="py-2 text-slate-200">{b.batch_name || b.name}</td>
+                                    <td className="py-2">
+                                      <span className={`px-2 py-1 rounded-full text-xs ${
+                                        b.status === 'completed' ? 'bg-emerald-500/20 text-emerald-300' :
+                                        b.status === 'pending' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
+                                      }`}>
+                                        {b.status || 'Unknown'}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 text-slate-300">{b.credential_count || b.credentials?.length || 0}</td>
+                                    <td className="py-2 text-slate-400 text-xs">{new Date(b.created_at).toLocaleDateString()}</td>
                                   </tr>
-                                </thead>
-                                <tbody>
-                                  {institutionBatches.map((b) => (
-                                    <tr key={b.batch_id || b.id} className="border-b border-white/5">
-                                      <td className="py-2 text-slate-200">{b.batch_name || b.name}</td>
-                                      <td className="py-2">
-                                        <span className={`px-2 py-1 rounded-full text-xs ${
-                                          b.status === 'completed' ? 'bg-emerald-500/20 text-emerald-300' : 
-                                          b.status === 'pending' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                                        }`}>
-                                          {b.status || 'Unknown'}
-                                        </span>
-                                      </td>
-                                      <td className="py-2 text-slate-300">{b.credential_count || b.credentials?.length || 0}</td>
-                                      <td className="py-2 text-slate-400 text-xs">{new Date(b.created_at).toLocaleDateString()}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                        {/* Student List */}
-                        {institutionStudents.length > 0 && (
-                          <div>
-                            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Students Issued</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {institutionStudents.map((s) => (
-                                <div key={s.studentId} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center">
-                                      <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                      </svg>
-                                    </div>
-                                    <div>
-                                      <div className="text-sm text-slate-200 font-mono">{s.studentId}</div>
-                                      <div className="text-xs text-slate-500">{s.count} credential(s)</div>
-                                    </div>
+                      {/* Student List */}
+                      {institutionStudents.length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Students Issued</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {institutionStudents.map((s) => (
+                              <div key={s.studentId} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center">
+                                    <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                    </svg>
+                                  </div>
+                                  <div>
+                                    <div className="text-sm text-slate-200 font-mono">{s.studentId}</div>
+                                    <div className="text-xs text-slate-500">{s.count} credential(s)</div>
                                   </div>
                                 </div>
-                              ))}
-                            </div>
+                              </div>
+                            ))}
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                        {/* Activity Log */}
-                        {institutionActivity.length > 0 && (
-                          <div>
-                            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Recent Activity</h4>
-                            <div className="space-y-2">
-                              {institutionActivity.map((activity, idx) => (
-                                <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                                      <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                      </svg>
-                                    </div>
-                                    <div>
-                                      <div className="text-sm text-slate-200">{activity.action}</div>
-                                      <div className="text-xs text-slate-500">{activity.details}</div>
-                                    </div>
-                                  </div>
-                                  <div className="text-xs text-slate-400">{new Date(activity.date).toLocaleString()}</div>
+                      {/* Credentials with Revoke */}
+                      {institutionCredentialsList.length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Issued Credentials</h4>
+                          <div className="space-y-2 max-h-64 overflow-y-auto">
+                            {institutionCredentialsList.map((c) => (
+                              <div key={c.credential_hash} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs text-slate-400 font-mono truncate">{c.credential_hash?.substring(0, 16)}...</div>
+                                  <div className="text-xs text-slate-500">{c.student_id}</div>
                                 </div>
-                              ))}
-                            </div>
+                                <button
+                                  onClick={() => onRevokeCredential(c.credential_hash)}
+                                  disabled={institutionLoading}
+                                  className="ml-3 px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-medium disabled:opacity-50"
+                                >
+                                  Revoke
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                        </div>
+                      )}
+
+                      {/* Activity Log */}
+                      {institutionActivity.length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Recent Activity</h4>
+                          <div className="space-y-2">
+                            {institutionActivity.map((activity, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                                    <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                  </div>
+                                  <div>
+                                    <div className="text-sm text-slate-200">{activity.action}</div>
+                                    <div className="text-xs text-slate-500">{activity.details}</div>
+                                  </div>
+                                </div>
+                                <div className="text-xs text-slate-400">{new Date(activity.date).toLocaleString()}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {institutionError && (
                       <div className={`text-sm rounded-xl p-3 border ${institutionError.includes('already') || institutionError.includes('duplicate') ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-rose-500/10 border-rose-500/30 text-rose-200'}`}>

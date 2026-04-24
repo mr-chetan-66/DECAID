@@ -1273,7 +1273,8 @@ const IssueRequest = z.object({
   issuerId: z.string().min(1),
   credentialData: z.string().min(1),
   issuedAt: z.string().datetime().optional(),
-  batchId: z.string().optional()
+  batchId: z.string().optional(),
+  generateZkp: z.boolean().optional()
 });
 
 app.post('/api/credentials/issue', async (req, res) => {
@@ -1285,6 +1286,14 @@ app.post('/api/credentials/issue', async (req, res) => {
   // Include studentId and issuerId in hash to make it unique per student
   const credentialHashHex = sha256Hex(`${parsed.data.studentId}:${parsed.data.issuerId}:${parsed.data.credentialData}`);
   const credentialHashBytes32 = ethers.hexlify(ethers.getBytes('0x' + credentialHashHex));
+
+  // Generate ZKP commitment if requested
+  let zkpCommitment = null;
+  let zkpNonce = null;
+  if (parsed.data.generateZkp) {
+    zkpNonce = crypto.randomBytes(32).toString('hex');
+    zkpCommitment = sha256Hex(`${credentialHashHex}:${zkpNonce}`);
+  }
 
   try {
     // Duplicate checks removed for testing duplicate score detection
@@ -1328,7 +1337,9 @@ app.post('/api/credentials/issue', async (req, res) => {
       credentialData: parsed.data.credentialData,
       issuedAt,
       txHash: receipt?.hash || tx.hash,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      zkpCommitment,
+      zkpNonce
     });
 
     // Also save to database for persistence
@@ -1361,7 +1372,9 @@ app.post('/api/credentials/issue', async (req, res) => {
     return res.json({
       ok: true,
       credentialHash: credentialHashHex,
-      txHash: receipt?.hash || tx.hash
+      txHash: receipt?.hash || tx.hash,
+      zkpCommitment,
+      zkpNonce
     });
   } catch (e) {
     const msg = String(e?.message || e);
@@ -1500,6 +1513,133 @@ app.post('/api/zkp/verify', (req, res) => {
     credentialHash,
     commitment,
     verifiedAt: new Date().toISOString()
+  });
+});
+
+// New commitment-only verification (no credentialHash or studentId required)
+const ZkpCommitmentVerifyRequest = z.object({
+  commitment: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  nonce: z.string().min(1)
+});
+
+app.post('/api/zkp/verify-by-commitment', async (req, res) => {
+  const parsed = ZkpCommitmentVerifyRequest.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  const { commitment, nonce } = parsed.data;
+  console.log(`[Verify by Commitment] commitment: ${commitment.substring(0, 8)}..., nonce: ${nonce.substring(0, 8)}...`);
+
+  // Look up credential by commitment in individual store
+  let foundCredential = null;
+  for (const [hash, cred] of individualCredentialStore.entries()) {
+    if (cred.zkpCommitment === commitment) {
+      foundCredential = { hash, ...cred };
+      break;
+    }
+  }
+
+  // If not found in memory, check database
+  if (!foundCredential && useDatabase) {
+    // This would require a database query by commitment
+    // For now, return not found
+    console.log(`[Verify by Commitment] Commitment not found in store`);
+    return res.status(404).json({
+      ok: false,
+      error: "Commitment not found",
+      valid: false
+    });
+  }
+
+  if (!foundCredential) {
+    console.log(`[Verify by Commitment] Commitment not found`);
+    return res.status(404).json({
+      ok: false,
+      error: "Commitment not found",
+      valid: false
+    });
+  }
+
+  // Verify the commitment by recomputing it (must match generation formula: credentialHash:studentId:nonce)
+  const computedCommitment = sha256Hex(`${foundCredential.hash}:${foundCredential.studentId}:${nonce}`);
+  const valid = computedCommitment === commitment;
+  console.log(`[Verify by Commitment] computed: ${computedCommitment.substring(0, 8)}..., provided: ${commitment.substring(0, 8)}..., valid: ${valid}`);
+
+  // Check blockchain verification
+  let blockchain = null;
+  try {
+    const registry = getRegistry();
+    const [exists, issuerAddress, issuedAt, revoked] = await registry.verify(
+      ethers.hexlify(ethers.getBytes('0x' + foundCredential.hash))
+    );
+    blockchain = {
+      exists,
+      issuerAddress,
+      issuedAt: Number(issuedAt),
+      revoked
+    };
+  } catch (e) {
+    blockchain = { error: String(e?.message || e) };
+  }
+
+  return res.json({
+    ok: true,
+    valid,
+    commitment,
+    blockchain,
+    // Do NOT return credentialHash, studentId, or credentialData for privacy
+    verifiedAt: new Date().toISOString()
+  });
+});
+
+// Store ZKP commitment for an existing credential
+const StoreZkpCommitmentRequest = z.object({
+  credentialHash: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  studentId: z.string().min(1),
+  commitment: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  nonce: z.string().min(1)
+});
+
+app.post('/api/zkp/store-commitment', async (req, res) => {
+  const parsed = StoreZkpCommitmentRequest.safeParse(req.body);
+  if (!parsed.success) {
+    console.log('[Store Commitment] Validation error:', parsed.error.flatten());
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  const { credentialHash, studentId, commitment, nonce } = parsed.data;
+  console.log(`[Store Commitment] credentialHash: ${credentialHash.substring(0, 8)}..., studentId: ${studentId}, commitment: ${commitment.substring(0, 8)}...`);
+
+  // Check if credential exists
+  const credential = individualCredentialStore.get(credentialHash);
+  if (!credential) {
+    console.log(`[Store Commitment] Credential not found in individualCredentialStore`);
+    console.log(`[Store Commitment] Current store size: ${individualCredentialStore.size}`);
+    return res.status(404).json({
+      ok: false,
+      error: "Credential not found"
+    });
+  }
+
+  // Verify the commitment is correct (must match generation formula: credentialHash:studentId:nonce)
+  const computedCommitment = sha256Hex(`${credentialHash}:${studentId}:${nonce}`);
+  if (computedCommitment !== commitment) {
+    console.log(`[Store Commitment] Commitment mismatch: computed ${computedCommitment.substring(0, 8)}... != provided ${commitment.substring(0, 8)}...`);
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid commitment for this credential hash and nonce"
+    });
+  }
+
+  // Store the commitment
+  credential.zkpCommitment = commitment;
+  credential.zkpNonce = nonce;
+  console.log(`[Store Commitment] Stored successfully`);
+
+  return res.json({
+    ok: true,
+    message: "ZKP commitment stored successfully"
   });
 });
 

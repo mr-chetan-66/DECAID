@@ -83,3 +83,57 @@ export async function verifyZkpProof({ credentialHash, studentId, nonce, commitm
   }
   return body;
 }
+
+export async function verifyZkpByCommitment({ commitment, nonce }) {
+  const base = getApiBaseUrl();
+  const r = await fetch(`${base}/api/zkp/verify-by-commitment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commitment, nonce })
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = body?.error || `Request failed (${r.status})`;
+    const err = new Error(msg);
+    err.status = r.status;
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
+
+export async function storeZkpCommitment({ credentialHash, studentId, commitment, nonce }) {
+  const base = getApiBaseUrl();
+  const r = await fetch(`${base}/api/zkp/store-commitment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credentialHash, studentId, commitment, nonce })
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = body?.error || `Request failed (${r.status})`;
+    const err = new Error(msg);
+    err.status = r.status;
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
+
+export async function revokeCredential({ credentialHash }) {
+  const base = getApiBaseUrl();
+  const r = await fetch(`${base}/api/credentials/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credentialHash })
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = body?.error || `Request failed (${r.status})`;
+    const err = new Error(msg);
+    err.status = r.status;
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
