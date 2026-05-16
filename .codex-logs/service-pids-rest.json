@@ -1,0 +1,26 @@
+﻿[
+    {
+        "Name":  "ai",
+        "Id":  13800,
+        "Out":  "E:\\FinalYearProject\\.codex-logs\\ai.out.log",
+        "Err":  "E:\\FinalYearProject\\.codex-logs\\ai.err.log"
+    },
+    {
+        "Name":  "auth",
+        "Id":  8972,
+        "Out":  "E:\\FinalYearProject\\.codex-logs\\auth.out.log",
+        "Err":  "E:\\FinalYearProject\\.codex-logs\\auth.err.log"
+    },
+    {
+        "Name":  "backend",
+        "Id":  10296,
+        "Out":  "E:\\FinalYearProject\\.codex-logs\\backend.out.log",
+        "Err":  "E:\\FinalYearProject\\.codex-logs\\backend.err.log"
+    },
+    {
+        "Name":  "frontend",
+        "Id":  16020,
+        "Out":  "E:\\FinalYearProject\\.codex-logs\\frontend.out.log",
+        "Err":  "E:\\FinalYearProject\\.codex-logs\\frontend.err.log"
+    }
+]

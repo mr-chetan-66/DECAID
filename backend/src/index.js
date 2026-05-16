@@ -20,6 +20,7 @@ import {
   initIssuerStats,
   updateIssuerStats,
   findResultsByHash,
+  findResultsByContentSignature,
   findResultsByStudent,
   getStudentDid,
   createStudentDid,
@@ -282,6 +283,108 @@ async function isDuplicateHashInBatches(hashHex) {
       }
     }
   }
+  return false;
+}
+
+function normalizeCredentialData(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function extractUniqueCredentialIdentifiers(credentialData, certificateNumber = null) {
+  const normalized = normalizeCredentialData(credentialData);
+  const identifiers = [];
+
+  const pushIdentifier = (label, rawValue) => {
+    const value = String(rawValue || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^[#: -]+|[#: -]+$/g, '')
+      .replace(/\s+/g, '');
+    if (value && value.length >= 4) {
+      identifiers.push(`${label}:${value}`);
+    }
+  };
+
+  pushIdentifier('certificate', certificateNumber);
+
+  const patterns = [
+    ['certificate', /\b(?:certificate|cert)\s*(?:number|no|id|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9/-]{2,})/gi],
+    ['registration', /\b(?:registration|reg)\s*(?:number|no|id|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9/-]{2,})/gi],
+    ['enrollment', /\b(?:enrollment|enrolment)\s*(?:number|no|id|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9/-]{2,})/gi],
+    ['roll', /\broll\s*(?:number|no|id|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9/-]{2,})/gi],
+    ['transcript', /\btranscript\s*(?:number|no|id|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9/-]{2,})/gi],
+    ['document', /\bdocument\s*(?:hash|id|number|no|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9/-]{5,})/gi],
+    ['serial', /\bserial\s*(?:number|no|id|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9/-]{2,})/gi]
+  ];
+
+  for (const [label, pattern] of patterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      pushIdentifier(label, match[1]);
+    }
+  }
+
+  return Array.from(new Set(identifiers)).sort();
+}
+
+function buildContentSignature(credentialData, certificateNumber = null) {
+  const identifiers = extractUniqueCredentialIdentifiers(credentialData, certificateNumber);
+  if (identifiers.length === 0) {
+    return null;
+  }
+  return sha256Hex(identifiers.join('|'));
+}
+
+async function hasCrossStudentContentDuplicate(contentSignature, studentId, excludedHash = null) {
+  const signature = String(contentSignature || '').trim().toLowerCase();
+  const currentStudentId = String(studentId || '').trim();
+  const excluded = String(excludedHash || '').trim().toLowerCase();
+
+  if (!signature || !currentStudentId) {
+    return false;
+  }
+
+  if (useDatabase) {
+    const results = await findResultsByContentSignature(signature);
+    return results.some((row) => {
+      const existingStudentId = String(row.student_id || '').trim();
+      const existingHash = String(row.credential_hash || '').trim().toLowerCase();
+      return existingStudentId && existingStudentId !== currentStudentId && existingHash !== excluded;
+    });
+  }
+
+  for (const credential of individualCredentialStore.values()) {
+    const existingStudentId = String(credential.studentId || '').trim();
+    const existingSignature = String(credential.contentSignature || '').trim().toLowerCase();
+    const existingHash = String(credential.credentialHash || '').trim().toLowerCase();
+    if (
+      existingSignature === signature &&
+      existingStudentId &&
+      existingStudentId !== currentStudentId &&
+      existingHash !== excluded
+    ) {
+      return true;
+    }
+  }
+
+  for (const record of batchStore.values()) {
+    for (const result of record.results || []) {
+      const existingStudentId = String(result.studentId || '').trim();
+      const existingSignature = String(result.contentSignature || '').trim().toLowerCase();
+      const existingHash = String(result.credentialHash || '').trim().toLowerCase();
+      if (
+        existingSignature === signature &&
+        existingStudentId &&
+        existingStudentId !== currentStudentId &&
+        existingHash !== excluded
+      ) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -564,6 +667,8 @@ const RiskRequest = z.object({
   studentId: z.string().min(1),
   issuerId: z.string().min(1),
   credentialHash: z.string().min(16),
+  credentialData: z.string().min(1).optional(),
+  contentSignature: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
   issuedAt: z.string().datetime().optional(),
   batchId: z.string().optional()
 });
@@ -675,6 +780,7 @@ app.post('/api/institutions/batches', strictLimiter, async (req, res) => {
 
     // Include studentId and issuerId in hash to make it unique per student
     const credentialHashHex = sha256Hex(`${c.studentId}:${c.issuerId}:${c.credentialData}`);
+    const contentSignature = buildContentSignature(c.credentialData, c.certificateNumber);
     const credentialHashBytes32 = ethers.hexlify(ethers.getBytes('0x' + credentialHashHex));
 
     let txHash = null;
@@ -716,6 +822,11 @@ app.post('/api/institutions/batches', strictLimiter, async (req, res) => {
     }
 
     try {
+      const contentDuplicateFlag = await hasCrossStudentContentDuplicate(
+        contentSignature,
+        c.studentId,
+        credentialHashHex
+      ) ? 1 : 0;
       const r = await fetch(`${aiUrl}/score`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -723,8 +834,10 @@ app.post('/api/institutions/batches', strictLimiter, async (req, res) => {
           studentId: c.studentId,
           issuerId: c.issuerId,
           credentialHash: credentialHashHex,
+          contentSignature,
           issuedAt: c.issuedAt,
-          batchId
+          batchId,
+          contentDuplicateFlag
         })
       });
       const body = await r.json();
@@ -748,6 +861,7 @@ app.post('/api/institutions/batches', strictLimiter, async (req, res) => {
       studentId: c.studentId,
       issuerId: c.issuerId,
       certificateNumber: c.certificateNumber || null,
+      contentSignature,
       ipfsCid,
       ipfsError,
       credentialHash: credentialHashHex,
@@ -759,6 +873,18 @@ app.post('/api/institutions/batches', strictLimiter, async (req, res) => {
     };
     
     results.push(result);
+
+    individualCredentialStore.set(credentialHashHex, {
+      studentId: c.studentId,
+      issuerId: c.issuerId,
+      credentialData: c.credentialData,
+      certificateNumber: c.certificateNumber || null,
+      contentSignature,
+      credentialHash: credentialHashHex,
+      issuedAt: c.issuedAt || new Date().toISOString(),
+      txHash,
+      createdAt: new Date().toISOString()
+    });
     
     // Save to database
     if (useDatabase) {
@@ -1095,6 +1221,7 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
   let risk = { ok: false, error: 'Insufficient data for risk assessment' };
   let effectiveStudentId = studentId;
   let effectiveIssuerId = issuerId;
+  let contentDuplicateDetected = false;
   
   // If studentId or issuerId missing, try to find from batch data
   if ((!studentId || !issuerId) && useDatabase) {
@@ -1170,24 +1297,20 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
         const duplicateDetected = await isDuplicateHashInBatches(h);
         console.log(`[Duplicate Check] Hash: ${h.substring(0, 8)}..., DuplicateDetected: ${duplicateDetected}`);
 
-        // Check for content duplicate (same credential data issued to different students)
-        let contentDuplicateDetected = false;
-        if (useDatabase) {
-          // Check if this issuer has issued the same credential data to other students
-          const allIssuerResults = await findResultsByIssuer(effectiveIssuerId);
-          // This is a simplified check - in production, you'd store credential data separately
-          // For now, we'll flag if the issuer has many credentials to different students
-          const uniqueStudents = new Set(allIssuerResults.map(r => r.student_id));
-          if (uniqueStudents.size > 5 && credentialCount > uniqueStudents.size) {
-            contentDuplicateDetected = true;
-          }
-        }
+        const knownCredential = individualCredentialStore.get(h);
+        const contentSignature =
+          knownCredential?.contentSignature ||
+          (knownCredential?.credentialData ? buildContentSignature(knownCredential.credentialData) : null);
+        contentDuplicateDetected = contentSignature
+          ? await hasCrossStudentContentDuplicate(contentSignature, effectiveStudentId, h)
+          : false;
         
         // Get batch size if available
         const batchSize = 1; // Default to individual issuance
         
-        const duplicateFlag = duplicateDetected || contentDuplicateDetected ? 1 : 0;
-        console.log(`[AI Service Request] duplicateFlag: ${duplicateFlag}, duplicateDetected: ${duplicateDetected}, contentDuplicateDetected: ${contentDuplicateDetected}`);
+        const duplicateFlag = duplicateDetected ? 1 : 0;
+        const contentDuplicateFlag = contentDuplicateDetected ? 1 : 0;
+        console.log(`[AI Service Request] duplicateFlag: ${duplicateFlag}, contentDuplicateFlag: ${contentDuplicateFlag}, duplicateDetected: ${duplicateDetected}, contentDuplicateDetected: ${contentDuplicateDetected}`);
 
         const r = await fetch(`${aiUrl}/score`, {
           method: 'POST',
@@ -1196,12 +1319,14 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
             studentId: effectiveStudentId,
             issuerId: effectiveIssuerId,
             credentialHash: h,
+            contentSignature,
             batchId: 'verification-batch',
             issuerTrustScore,
             credentialCount,
             studentCredentialCount,
             timeGap,
             duplicateFlag,
+            contentDuplicateFlag,
             batchSize
           })
         });
@@ -1264,6 +1389,7 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
     trustRank: trust.rank,
     trustSignals: trust.signals,
     duplicateDetected,
+    contentDuplicateDetected,
     zkp
   });
 });
@@ -1285,6 +1411,7 @@ app.post('/api/credentials/issue', async (req, res) => {
 
   // Include studentId and issuerId in hash to make it unique per student
   const credentialHashHex = sha256Hex(`${parsed.data.studentId}:${parsed.data.issuerId}:${parsed.data.credentialData}`);
+  const contentSignature = buildContentSignature(parsed.data.credentialData);
   const credentialHashBytes32 = ethers.hexlify(ethers.getBytes('0x' + credentialHashHex));
 
   // Generate ZKP commitment if requested
@@ -1296,6 +1423,12 @@ app.post('/api/credentials/issue', async (req, res) => {
   }
 
   try {
+    const contentDuplicateDetected = await hasCrossStudentContentDuplicate(
+      contentSignature,
+      parsed.data.studentId,
+      credentialHashHex
+    );
+
     // Duplicate checks removed for testing duplicate score detection
     // Check if credential already exists in database (before blockchain check)
     // if (useDatabase) {
@@ -1335,6 +1468,8 @@ app.post('/api/credentials/issue', async (req, res) => {
       studentId: parsed.data.studentId,
       issuerId: parsed.data.issuerId,
       credentialData: parsed.data.credentialData,
+      contentSignature,
+      credentialHash: credentialHashHex,
       issuedAt,
       txHash: receipt?.hash || tx.hash,
       createdAt: new Date().toISOString(),
@@ -1356,6 +1491,7 @@ app.post('/api/credentials/issue', async (req, res) => {
         batchId: individualBatchId,
         studentId: parsed.data.studentId,
         issuerId: parsed.data.issuerId,
+        contentSignature,
         credentialHash: credentialHashHex,
         txHash: receipt?.hash || tx.hash,
         chainError: null,
@@ -1373,6 +1509,7 @@ app.post('/api/credentials/issue', async (req, res) => {
       ok: true,
       credentialHash: credentialHashHex,
       txHash: receipt?.hash || tx.hash,
+      contentDuplicateDetected,
       zkpCommitment,
       zkpNonce
     });

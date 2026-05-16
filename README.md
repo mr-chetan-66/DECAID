@@ -1,302 +1,223 @@
-# DECAID: Decentralized Academic Identity & Credential Risk Assessment System
+# DECAID
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
-[![Python Version](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
-[![Blockchain](https://img.shields.io/badge/blockchain-ethereum-blue)](https://ethereum.org/)
+DECAID is a final-year project for decentralized academic identity and credential verification. It combines a React frontend, a Node.js backend, a local Ethereum smart contract, a FastAPI fraud-risk service, and a separate FastAPI authentication service.
 
-🎓 **Revolutionizing academic credential verification with blockchain, AI, and zero-knowledge proofs**
+The current workspace is a local development/demo implementation. It is designed to show how institutions can issue credentials, students can view identity and credential data, employers can verify credentials, and administrators can inspect stored project data.
 
-## 🌟 Features
+## Current System At A Glance
 
-### **🔐 Privacy-Preserving Verification**
-- **Zero-Knowledge Proofs**: Verify credentials without revealing personal data
-- **GDPR Compliant**: Privacy-first design
-- **Selective Disclosure**: Students control what they share
+| Layer | Path | Port | Purpose |
+| --- | --- | ---: | --- |
+| Frontend | `frontend` | `3000` | React/Vite UI with role-based tabs |
+| Backend API | `backend` | `5000` | Credential, verification, document, admin, blockchain, and ZKP APIs |
+| Auth service | `auth-service` | `8001` | Username/password registration, login, JWT, and role storage |
+| AI service | `ai-service` | `8000` | Hybrid fraud-risk scoring with rules and Isolation Forest |
+| Blockchain | `blockchain` | `8545` | Hardhat local Ethereum node and `CredentialRegistry` contract |
+| Database | Docker PostgreSQL | `5432` | Optional persistence; backend falls back to memory if unset |
 
-### **⛓️ Immutable Blockchain Storage**
-- **Ethereum Smart Contracts**: Tamper-proof credential records
-- **Hardhat Development**: Local testing environment
-- **Gas Optimized**: Efficient contract operations
+Important context:
 
-### **🤖 AI-Powered Fraud Detection**
-- **Isolation Forest Algorithm**: Advanced anomaly detection
-- **Risk Scoring**: 0-100 fraud risk assessment
-- **Pattern Recognition**: Identifies suspicious credential patterns
+- The active frontend login page talks to `auth-service` at `http://127.0.0.1:8001`.
+- The backend still contains Google OAuth endpoints, but the current frontend is not wired to Google Sign-In.
+- File/document upload endpoints keep `ipfs` names for compatibility, but the current implementation stores file data directly in memory or PostgreSQL using generated file IDs.
+- The blockchain contract allows duplicate issuance in this demo so duplicate and fraud-risk detection can be tested.
 
-### **⭐ Trust Ranking System**
-- **Institution Reputation**: 1-5 star rating system
-- **Historical Tracking**: Success rates and revocations
-- **Dynamic Scoring**: Updates based on performance
+## Features
 
-### **🎯 Multi-User Platform**
-- **Students**: Get DIDs, manage credentials, generate ZKPs
-- **Institutions**: Issue credentials, batch upload, track statistics
-- **Employers**: Verify credentials, assess risk, check trust
+- Role-based web app for `student`, `institution`, `employer`, and `admin` users.
+- Institution credential issuance for single credentials and batch submissions.
+- SHA-256 credential hashing using `studentId`, `issuerId`, and credential data.
+- Ethereum smart contract registry for issue, verify, revoke, and issuer authorization status.
+- AI fraud-risk score from `0` to `100`, with rule and model contributions.
+- Duplicate-content detection for reused certificate, registration, enrollment, roll, transcript, document, or serial identifiers.
+- Student DID generation using `did:decaid:<uuid>`.
+- Zero-knowledge-style SHA-256 commitment proof flow.
+- Admin dashboard for students, issuers, credentials, batches, documents, and summary counts.
+- Optional PostgreSQL persistence with in-memory fallback.
 
-### **🗄️ Modern Tech Stack**
-- **Frontend**: React + Tailwind CSS
-- **Backend**: Node.js + Express
-- **Database**: PostgreSQL with in-memory fallback
-- **Storage**: IPFS integration
-- **AI**: Python + FastAPI
+## Prerequisites
 
-## 🚀 Quick Start
-
-### Prerequisites
-```bash
-- Node.js 18+
-- Python 3.12+
-- Docker (optional)
+- Node.js 18 or newer
+- npm
+- Python 3.12 recommended
+- Docker Desktop, only if you want PostgreSQL persistence
 - Git
-```
+- Windows PowerShell, or an equivalent terminal
 
-### Installation
-```bash
-# Clone repository
-git clone https://github.com/YOUR_USERNAME/DECAID.git
-cd DECAID
+## Install Dependencies
 
-# Install dependencies
+From the repository root:
+
+```powershell
+cd E:\FinalYearProject
 npm install
-cd backend && npm install
-cd ../frontend && npm install
-cd ../ai-service && pip install -r requirements.txt
-
-# Setup environment
-cp backend/.env.example backend/.env
-# Edit .env with your configuration
+cd blockchain; npm install
+cd ..\backend; npm install
+cd ..\frontend; npm install
+cd ..; python -m pip install -r ai-service\requirements.txt
+python -m pip install -r auth-service\requirements.txt bcrypt
 ```
 
-### Start Services
-```bash
-# Terminal 1: PostgreSQL (optional)
+If `scikit-learn` or `numpy` wheels are unavailable for your Python version, run `ai-service/simple_main.py` with `simple_requirements.txt` as a fallback.
+
+## Environment
+
+Copy the backend example if you want to use environment variables:
+
+```powershell
+copy backend\.env.example backend\.env
+```
+
+For a local Hardhat demo, `ISSUER_PRIVATE_KEY` should match the first Hardhat account:
+
+```text
+ISSUER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+CHAIN_RPC_URL=http://127.0.0.1:8545
+AI_SERVICE_URL=http://127.0.0.1:8000
+```
+
+PostgreSQL is optional. If `DB_HOST` is not set, the backend runs with in-memory stores.
+
+## Run The Full Stack
+
+Use separate terminals in this order.
+
+### 1. Optional PostgreSQL
+
+```powershell
+cd E:\FinalYearProject
 docker-compose up -d
+```
 
-# Terminal 2: Blockchain
-cd blockchain
+### 2. Hardhat Blockchain
+
+```powershell
+cd E:\FinalYearProject\blockchain
 npx hardhat node --hostname 127.0.0.1 --port 8545
+```
 
-# Terminal 3: Deploy contracts
+### 3. Deploy Smart Contract
+
+```powershell
+cd E:\FinalYearProject\blockchain
 npx hardhat run scripts/deploy.js --network localhost
+```
 
-# Terminal 4: AI Service
-cd ai-service
-python -m uvicorn main:app --port 8000
+This writes the deployed contract address and ABI to `backend/src/contract/CredentialRegistry.json`.
 
-# Terminal 5: Backend
-cd backend
+### 4. AI Service
+
+```powershell
+cd E:\FinalYearProject\ai-service
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+### 5. Auth Service
+
+```powershell
+cd E:\FinalYearProject\auth-service
+python -m uvicorn main:app --host 127.0.0.1 --port 8001
+```
+
+The auth service creates a default admin user:
+
+```text
+username: admin
+password: admin123
+```
+
+### 6. Backend API
+
+```powershell
+cd E:\FinalYearProject\backend
 npm run dev
+```
 
-# Terminal 6: Frontend
-cd frontend
+### 7. Frontend
+
+```powershell
+cd E:\FinalYearProject\frontend
 npm run dev
 ```
 
-### Access Points
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:5000
-- **AI Service**: http://localhost:8000
-- **Blockchain**: http://localhost:8545
+Open `http://localhost:3000`.
 
-## 📖 Documentation
+## Health Checks
 
-### **📘 Complete Handbook**
-👉 [**DECAID-Handbook.md**](./DECAID-Handbook.md) - Comprehensive 50+ page guide covering:
-- System overview and architecture
-- User manuals for all three user types
-- Developer guide and API reference
-- Testing procedures and troubleshooting
-- Production deployment guide
-
-### **Quick Demo**
-```bash
-# 1. Issue Credential (Institution)
-Tab: Institution Portal
-Issuer ID: UNIVERSITY-2024
-Student ID: ALEX-2024-001
-Credential Data: Bachelor of Computer Science
-
-# 2. Generate ZKP (Student)
-Tab: ZKP Tools
-Credential Hash: [from step 1]
-Student ID: ALEX-2024-001
-
-# 3. Verify Credential (Employer)
-Tab: Employer Verification
-Hash: [from step 1]
-Student ID: ALEX-2024-001
-Issuer ID: UNIVERSITY-2024
+```powershell
+curl.exe http://127.0.0.1:8000/health
+curl.exe http://127.0.0.1:8001/health
+curl.exe http://127.0.0.1:5000/health
+curl.exe http://localhost:3000
 ```
 
-## 🏗️ Architecture
+## Basic Demo Flow
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │    Backend      │    │   AI Service    │
-│   (React)       │◄──►│   (Node.js)     │◄──►│   (Python)      │
-│  Port: 3000     │    │  Port: 5000     │    │  Port: 8000     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   PostgreSQL    │    │   Blockchain    │    │      IPFS       │
-│   (Optional)    │    │  (Hardhat)      │    │   (Optional)    │
-│  Port: 5432     │    │  Port: 8545     │    │  Port: 5001     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
+1. Start all services.
+2. Log in as `admin/admin123`, or register a new role-specific user.
+3. Open the Institution Portal.
+4. Enter an issuer ID, student ID, and credential data.
+5. Issue the credential and copy the returned 64-character hash.
+6. Open Employer Verify and verify the hash.
+7. Open Student Identity and load the student ID.
+8. Open ZKP Tools as admin to generate or verify commitments.
+9. Open Admin Dashboard to inspect students, issuers, credentials, batches, and documents.
 
-## 🎯 Use Cases
+## Main Backend API Endpoints
 
-### **University Admissions**
-- Students prove degrees without revealing transcripts
-- Admissions offices verify credentials with trust scores
-- Privacy-preserving document verification
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/health` | `GET` | Backend health |
+| `/api/risk/score` | `POST` | Proxy risk request to AI service |
+| `/api/credentials/issue` | `POST` | Issue one credential |
+| `/api/credentials/revoke` | `POST` | Revoke a credential on chain |
+| `/api/credentials/verify/:hash` | `GET` | Direct blockchain verification |
+| `/api/verify/by-hash/:hash` | `GET` | Employer-style verification with risk and trust data |
+| `/api/institutions/batches` | `POST` | Batch issue credentials |
+| `/api/institutions/batches/:batchId` | `GET` | Fetch batch details |
+| `/api/students/:studentId/profile` | `GET` | Student DID and credential profile |
+| `/api/zkp/generate` | `POST` | Generate SHA-256 commitment proof |
+| `/api/zkp/verify` | `POST` | Verify proof with hash, student ID, nonce, and commitment |
+| `/api/zkp/verify-by-commitment` | `POST` | Verify stored commitment without returning private credential data |
+| `/api/ipfs/upload` | `POST` | Upload a file into temporary direct storage |
+| `/api/documents/upload` | `POST` | Attach uploaded file metadata/data to a credential |
+| `/api/documents` | `GET` | List documents, optionally by `studentId` or `issuerId` query |
+| `/api/admin/*` | mixed | Admin dashboard data and deletes |
 
-### **Job Applications**
-- Employers verify applicant credentials instantly
-- AI-powered fraud detection reduces hiring risks
-- ZKP enables privacy-first verification
+## Project Structure
 
-### **Professional Licensing**
-- Medical boards verify licenses efficiently
-- Government agencies check credential authenticity
-- Reduced fraud in regulated industries
-
-### **Immigration Verification**
-- Immigration officers verify foreign credentials
-- Trust ranking speeds up visa processing
-- Privacy-compliant cross-border verification
-
-## 🔧 Technology Stack
-
-| Component | Technology | Purpose |
-|-----------|-------------|---------|
-| **Frontend** | React + Tailwind | Modern responsive UI |
-| **Backend** | Node.js + Express | API orchestration |
-| **Blockchain** | Ethereum + Hardhat | Immutable storage |
-| **AI/ML** | Python + FastAPI | Fraud detection |
-| **Database** | PostgreSQL | Data persistence |
-| **Storage** | IPFS | Document storage |
-| **ZKP** | SHA-256 commitments | Privacy verification |
-
-## 📊 Key Features
-
-### **🔐 Zero-Knowledge Proofs**
-```
-Generate: commitment = SHA-256(hash:studentId:nonce)
-Verify: Recompute and compare commitment
-Privacy: Original data never revealed
+```text
+E:\FinalYearProject
+|-- ai-service          FastAPI fraud-risk service
+|-- auth-service        FastAPI username/password auth service
+|-- backend             Express API and database layer
+|-- blockchain          Hardhat project and Solidity contract
+|-- frontend            React/Vite/Tailwind application
+|-- docker-compose.yml  Optional PostgreSQL service
+|-- fraud-test-data.json
+|-- README.md
+|-- DECAID-Handbook.md
+|-- UserGuide.md
+|-- TESTING.md
 ```
 
-### **🤖 AI Risk Scoring**
-- **Algorithm**: Isolation Forest
-- **Input**: Credential metadata and patterns
-- **Output**: Risk score (0-100, higher = riskier)
-- **Model**: Continuously learning
+## Known Current Limitations
 
-### **⭐ Trust Ranking**
-- **Factors**: Success rate, revocations, risk scores
-- **Scale**: 1-5 stars (5 = highest trust)
-- **Dynamic**: Updates with each credential
-- **Transparent**: All signals visible
+- The frontend has some UI paths that reference backend endpoints that are not fully aligned yet, such as institution stats and one student document lookup path. The admin dashboard and direct API endpoints remain useful for inspecting the same data.
+- Commitment-only ZKP lookup is currently memory-backed for individually issued credentials, so it is best tested in the same backend process where the commitment was stored.
+- The Google OAuth backend code is present, but the current frontend login screen uses the separate `auth-service`.
+- The demo smart contract allows duplicate issue calls to support fraud-detection testing; production contracts should restore strict duplicate prevention.
+- The backend has an in-memory fallback, so data disappears when the backend restarts unless PostgreSQL is configured.
 
-## 🧪 Testing
+## Documentation
 
-### **Health Checks**
-```bash
-curl http://localhost:5000/health    # Backend
-curl http://localhost:8000/health    # AI Service
-curl http://localhost:3000           # Frontend
-```
+- `DECAID-Handbook.md` - architecture, developer guide, workflows, and production notes.
+- `UserGuide.md` - role-based usage instructions for students, institutions, employers, and admins.
+- `TESTING.md` - health checks, API tests, UI tests, and fraud scenarios.
+- `RUN_WITH_AUTH_AND_FRAUD_TESTS.md` - exact local startup order with authentication and fraud test data.
+- `GOOGLE_OAUTH_IMPLEMENTATION_REPORT.md` - current authentication architecture and Google OAuth status.
+- `DECAID_Presentation_Script.md` - presentation-ready explanation and demo script.
 
-### **API Testing**
-```bash
-# Issue credential
-curl -X POST http://localhost:5000/api/credentials/issue \
-  -H "Content-Type: application/json" \
-  -d '{"studentId":"S-TEST","issuerId":"UNI-TEST","credentialData":"Test Degree"}'
+## License
 
-# Verify credential
-curl "http://localhost:5000/api/verify/by-hash/HASH?studentId=S-TEST&issuerId=UNI-TEST"
-```
-
-## 🚀 Production Deployment
-
-### **Environment Variables**
-```bash
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=decaid
-DB_USER=decaid
-DB_PASSWORD=secure_password
-CHAIN_RPC_URL=http://localhost:8545
-ISSUER_PRIVATE_KEY=0x...
-AI_SERVICE_URL=http://localhost:8000
-IPFS_API_URL=http://localhost:5001
-```
-
-### **Security Considerations**
-- JWT authentication for institutions
-- API rate limiting
-- HTTPS enforcement
-- Input validation and sanitization
-- Secure private key management
-- Database encryption
-
-## 📈 Future Roadmap
-
-### **Phase 1: Enhanced Privacy**
-- [ ] zk-SNARKs implementation
-- [ ] Mobile app (React Native)
-- [ ] OAuth integration (Google, Microsoft)
-
-### **Phase 2: Scaling**
-- [ ] Multi-chain support (Polygon, Arbitrum)
-- [ ] Layer 2 solutions
-- [ ] Advanced AI models (Deep Learning)
-
-### **Phase 3: Ecosystem**
-- [ ] University SIS integration
-- [ ] HR platform APIs
-- [ ] Government service integrations
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### **Development Guidelines**
-- Follow existing code patterns
-- Add tests for new features
-- Update documentation
-- Ensure all tests pass
-- Follow semantic versioning
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 📞 Support
-
-- 📖 **Handbook**: [DECAID-Handbook.md](./DECAID-Handbook.md)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/DECAID/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/DECAID/discussions)
-- 📧 **Email**: [your-email@example.com]
-
-## 🏆 Acknowledgments
-
-- **Ethereum Foundation** - Blockchain infrastructure
-- **Hardhat Team** - Development framework
-- **FastAPI** - Python web framework
-- **React Team** - Frontend library
-- **OpenAI** - AI/ML research insights
-
----
-
-**🎓 Revolutionizing credential verification with privacy, trust, and technology**
-
-*Built with ❤️ for the future of academic credentials*
+This project is licensed under the MIT License. See `LICENSE`.

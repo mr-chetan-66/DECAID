@@ -14,6 +14,7 @@ class ScoreRequest(BaseModel):
     studentId: str = Field(min_length=1, max_length=255)
     issuerId: str = Field(min_length=1, max_length=255)
     credentialHash: str = Field(min_length=64, max_length=64, pattern=r'^[0-9a-fA-F]{64}$')
+    contentSignature: Optional[str] = Field(default=None, min_length=64, max_length=64, pattern=r'^[0-9a-fA-F]{64}$')
     issuedAt: Optional[datetime] = None
     batchId: Optional[str] = Field(max_length=255)
     # New behavioral features
@@ -22,6 +23,7 @@ class ScoreRequest(BaseModel):
     studentCredentialCount: Optional[int] = Field(default=1, ge=0)  # credentials for student
     timeGap: Optional[float] = Field(default=86400.0, ge=0)  # seconds between issuances
     duplicateFlag: Optional[int] = Field(default=0, ge=0, le=1)  # 1 if duplicate, else 0
+    contentDuplicateFlag: Optional[int] = Field(default=0, ge=0, le=1)  # 1 if same credential content is reused for another student
     batchSize: Optional[int] = Field(default=1, ge=1)  # number in batch
 
 
@@ -96,6 +98,7 @@ def _features(req: ScoreRequest) -> np.ndarray:
     
     # Behavioral flags
     duplicate_flag = float(req.duplicateFlag or 0)
+    content_duplicate_flag = float(req.contentDuplicateFlag or 0)
     has_batch = 1.0 if req.batchId else 0.0
     
     # Age of credential (normalized to years)
@@ -111,9 +114,9 @@ def _features(req: ScoreRequest) -> np.ndarray:
             student_credential_count_norm,  # Student's credentials (higher = more experienced)
             time_gap_norm,             # Time since last issuance (lower = more suspicious)
             batch_size_norm,           # Batch size (higher = more suspicious)
-            duplicate_flag,           # Duplicate credential flag
+            max(duplicate_flag, content_duplicate_flag),  # Duplicate/hash or content clone signal
             has_batch,                 # Whether this is a batch issuance
-            age_years,                 # Credential age (newer = slightly more suspicious)
+            age_years + (content_duplicate_flag * 0.25),  # Small bump for cloned content cases
         ]],
         dtype=np.float32,
     )
@@ -166,6 +169,10 @@ def score(req: ScoreRequest):
         if req.duplicateFlag == 1:
             rule_score += 40
             reasons.append("Duplicate credential detected")
+
+        if req.contentDuplicateFlag == 1:
+            rule_score += 35
+            reasons.append("A unique credential identifier was reused for a different student")
         
         # Low issuer trust → increased risk
         if req.issuerTrustScore and req.issuerTrustScore <= 2:

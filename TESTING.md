@@ -1,439 +1,393 @@
 # DECAID Testing Guide
 
-Complete step-by-step guide to test the DECAID system and verify all features work correctly.
+This guide tests the current local DECAID implementation: blockchain registry, backend API, auth service, AI fraud-risk service, frontend workflows, document storage, and fraud scenarios.
 
----
+## Test Environment
 
-## Table of Contents
+Expected local services:
 
-1. [Prerequisites](#prerequisites)
-2. [Health Checks](#health-checks)
-3. [End-to-End Test Workflow](#end-to-end-test-workflow)
-4. [API Testing with cURL](#api-testing-with-curl)
-5. [UI Testing Steps](#ui-testing-steps)
-6. [Expected Results](#expected-results)
-7. [Troubleshooting](#troubleshooting)
+| Service | URL |
+| --- | --- |
+| Frontend | `http://localhost:3000` |
+| Backend API | `http://127.0.0.1:5000` |
+| AI service | `http://127.0.0.1:8000` |
+| Auth service | `http://127.0.0.1:8001` |
+| Hardhat blockchain | `http://127.0.0.1:8545` |
+| PostgreSQL | `localhost:5432` optional |
 
----
-
-## Prerequisites
-
-Before testing, ensure all services are running:
-
-```bash
-# 1. Blockchain Node (Terminal 1)
-cd blockchain
-npx hardhat node --port 8545
-
-# 2. Deploy Smart Contract (Terminal 2)
-cd blockchain
-npx hardhat run scripts/deploy.js --network localhost
-
-# 3. AI Service (Terminal 3)
-cd ai-service
-python -m uvicorn main:app --port 8000
-
-# 4. Backend (Terminal 4)
-cd backend
-npm run dev
-
-# 5. Frontend (Terminal 5)
-cd frontend
-npm run dev
-```
-
----
+Start the stack using `RUN_WITH_AUTH_AND_FRAUD_TESTS.md` before running the tests below.
 
 ## Health Checks
 
-Run these commands to verify all services are up:
-
-```bash
-# Check Backend
-curl http://localhost:5000/health
-# Expected: {"ok":true,"service":"backend",...}
-
-# Check AI Service
-curl http://localhost:8000/health
-# Expected: {"ok":true,"service":"ai-service",...}
-
-# Check Frontend (open in browser)
-open http://localhost:3000
+```powershell
+curl.exe http://127.0.0.1:8000/health
+curl.exe http://127.0.0.1:8001/health
+curl.exe http://127.0.0.1:5000/health
+curl.exe http://localhost:3000
 ```
 
----
+Expected:
 
-## End-to-End Test Workflow
+- AI returns `{ "ok": true, "service": "ai", ... }`.
+- Auth returns `{ "ok": true, "service": "auth" }`.
+- Backend returns `{ "ok": true, "service": "backend", ... }`.
+- Frontend returns an HTML page.
 
-### Step 1: Issue a Credential (Institution)
+## Authentication Tests
 
-**Using cURL:**
-```bash
-curl -X POST http://localhost:5000/api/credentials/issue \
-  -H "Content-Type: application/json" \
-  -d '{
-    "studentId": "STUDENT-001",
-    "issuerId": "UNIVERSITY-2024",
-    "credentialData": "Bachelor of Computer Science - First Class Honours"
-  }'
+### Login With Default Admin
+
+```powershell
+$loginBody = @{
+  username = "admin"
+  password = "admin123"
+} | ConvertTo-Json
+
+$login = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/login" -ContentType "application/json" -Body $loginBody
+$login
 ```
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "credentialHash": "abc123...",
-  "blockchain": {
-    "exists": true,
-    "revoked": false,
-    "txHash": "0x..."
-  },
-  "risk": {
-    "riskScore": 25,
-    "model": "isolation_forest"
-  },
-  "trustRank": 4,
-  "did": "did:decaid:..."
-}
+Expected:
+
+- A `token` field.
+- A `user` object with role `admin`.
+
+### Read Current User
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8001/me" -Headers @{ Authorization = "Bearer $($login.token)" }
 ```
 
-**Save the `credentialHash` for the next steps.**
+Expected:
 
----
+- Current admin user details.
 
-### Step 2: Verify the Credential (Employer)
+### Register A Test Institution
 
-Replace `YOUR_HASH` with the credential hash from Step 1:
+```powershell
+$registerBody = @{
+  username = "institution-test"
+  password = "test12345"
+  role = "institution"
+} | ConvertTo-Json
 
-```bash
-curl "http://localhost:5000/api/verify/by-hash/YOUR_HASH?studentId=STUDENT-001&issuerId=UNIVERSITY-2024"
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8001/register" -ContentType "application/json" -Body $registerBody
 ```
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "credentialHash": "abc123...",
-  "blockchain": {
-    "exists": true,
-    "revoked": false
-  },
-  "risk": {
-    "riskScore": 25,
-    "category": "Low Risk"
-  },
-  "trustRank": 4,
-  "status": "✅ Active"
-}
+Expected:
+
+- A user record with role `institution`.
+- If the user already exists, a `400` response is acceptable for repeat test runs.
+
+## Credential API Tests
+
+### Issue A Credential
+
+```powershell
+$issueBody = @{
+  studentId = "STU-TEST-001"
+  issuerId = "UNIV-TEST"
+  credentialData = "Bachelor of Computer Science, Certificate Number CS-TEST-001"
+} | ConvertTo-Json
+
+$issued = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/api/credentials/issue" -ContentType "application/json" -Body $issueBody
+$issued
 ```
 
----
+Expected:
 
-### Step 3: Generate Zero-Knowledge Proof (Student)
+- `ok: true`
+- `credentialHash` is a 64-character hex string.
+- `txHash` is present if the blockchain call succeeded.
 
-```bash
-curl -X POST http://localhost:5000/api/zkp/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "credentialHash": "YOUR_HASH",
-    "studentId": "STUDENT-001"
-  }'
+### Verify By Hash
+
+```powershell
+$hash = $issued.credentialHash
+$verify = Invoke-RestMethod "http://127.0.0.1:5000/api/verify/by-hash/$hash?studentId=STU-TEST-001&issuerId=UNIV-TEST"
+$verify
 ```
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "commitment": "def456...",
-  "nonce": "uuid-string-here",
-  "algorithm": "SHA-256-commitment-v1"
-}
+Expected:
+
+- `blockchain.exists: true`
+- `blockchain.revoked: false`
+- `risk.ok: true`
+- `trustRank` between `1` and `5`
+
+### Verify Student ID Mismatch Protection
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:5000/api/verify/by-hash/$hash?studentId=WRONG-STUDENT&issuerId=UNIV-TEST"
 ```
 
-**Save both `commitment` and `nonce`.**
+Expected:
 
----
+- A forbidden response with `code: STUDENT_ID_MISMATCH` when the backend has the original student mapping in memory or PostgreSQL.
 
-### Step 4: Verify ZKP (Employer)
+### Direct Blockchain Verification
 
-```bash
-curl -X POST http://localhost:5000/api/zkp/verify \
-  -H "Content-Type: application/json" \
-  -d '{
-    "credentialHash": "YOUR_HASH",
-    "studentId": "STUDENT-001",
-    "nonce": "YOUR_NONCE",
-    "commitment": "YOUR_COMMITMENT"
-  }'
+```powershell
+Invoke-RestMethod "http://127.0.0.1:5000/api/credentials/verify/$hash"
 ```
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "valid": true,
-  "recomputed": "def456...",
-  "message": "ZKP verified: credential is authentic"
-}
+Expected:
+
+- `exists: true`
+- `revoked: false`
+
+## ZKP Tests
+
+DECAID's current ZKP demo uses SHA-256 commitments:
+
+```text
+commitment = sha256(credentialHash:studentId:nonce)
 ```
 
----
+### Generate Proof
 
-### Step 5: View Student Profile
+```powershell
+$proofBody = @{
+  credentialHash = $hash
+  studentId = "STU-TEST-001"
+} | ConvertTo-Json
 
-```bash
-curl http://localhost:5000/api/students/STUDENT-001/profile
+$proof = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/api/zkp/generate" -ContentType "application/json" -Body $proofBody
+$proof
 ```
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "studentId": "STUDENT-001",
-  "did": "did:decaid:...",
-  "credentials": [
-    {
-      "hash": "abc123...",
-      "data": "Bachelor of Computer Science - First Class Honours",
-      "issuer": "UNIVERSITY-2024",
-      "riskScore": 25,
-      "status": "active"
+Expected:
+
+- `commitment` is 64-character hex.
+- `nonce` is returned.
+- `algorithm` is `SHA-256-commitment-v1`.
+
+### Verify Proof
+
+```powershell
+$zkpVerifyBody = @{
+  credentialHash = $hash
+  studentId = "STU-TEST-001"
+  nonce = $proof.nonce
+  commitment = $proof.commitment
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/api/zkp/verify" -ContentType "application/json" -Body $zkpVerifyBody
+```
+
+Expected:
+
+- `valid: true`.
+
+### Commitment-Only Verification
+
+Commitment-only verification depends on the backend's in-memory individual credential store. It works best immediately after issuing and storing a commitment in the same backend process.
+
+```powershell
+$storeBody = @{
+  credentialHash = $hash
+  studentId = "STU-TEST-001"
+  nonce = $proof.nonce
+  commitment = $proof.commitment
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/api/zkp/store-commitment" -ContentType "application/json" -Body $storeBody
+
+$commitOnlyBody = @{
+  nonce = $proof.nonce
+  commitment = $proof.commitment
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/api/zkp/verify-by-commitment" -ContentType "application/json" -Body $commitOnlyBody
+```
+
+Expected:
+
+- `valid: true`
+- Blockchain summary returned without exposing student ID or credential hash.
+
+## Student Profile Tests
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:5000/api/students/STU-TEST-001/profile"
+```
+
+Expected:
+
+- `did` starts with `did:decaid:`.
+- `credentialCount` is at least `1`.
+- Credentials include blockchain, risk, trust, and duplicate fields.
+
+## Batch Tests
+
+```powershell
+$batchBody = @{
+  issuerId = "UNIV-TEST"
+  credentials = @(
+    @{
+      studentId = "STU-BATCH-001"
+      issuerId = "UNIV-TEST"
+      credentialData = "Bachelor of Science, Certificate Number BATCH-001"
+    },
+    @{
+      studentId = "STU-BATCH-002"
+      issuerId = "UNIV-TEST"
+      credentialData = "Bachelor of Arts, Certificate Number BATCH-002"
     }
-  ],
-  "totalCredentials": 1
-}
+  )
+} | ConvertTo-Json -Depth 5
+
+$batch = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/api/institutions/batches" -ContentType "application/json" -Body $batchBody
+$batch
 ```
 
----
+Expected:
 
-### Step 6: Check Institution Stats
+- `ok: true`
+- `batchId` present
+- `count: 2`
 
-```bash
-curl http://localhost:5000/api/issuers/UNIVERSITY-2024/stats
+Fetch the batch:
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:5000/api/institutions/batches/$($batch.batchId)"
 ```
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "issuerId": "UNIVERSITY-2024",
-  "totalIssued": 1,
-  "totalRevoked": 0,
-  "successRate": 100,
-  "trustRank": 4,
-  "averageRiskScore": 25
-}
+Expected:
+
+- Batch metadata and two results.
+
+## Fraud Detection Tests
+
+Use `fraud-test-data.json`.
+
+For each `fraudPairs` entry:
+
+1. Issue the `first` credential.
+2. Issue the `second` credential with the reused unique identifier.
+3. Verify the second credential hash.
+
+Expected:
+
+- `contentDuplicateDetected: true` in verification, when the backend can resolve the stored content signature.
+- `risk.reasons` includes reused credential identifier reasoning.
+- `risk.ruleScore` increases.
+
+For `safePairs`:
+
+- Shared descriptive text should not trigger the unique identifier duplicate rule.
+
+## Revocation Test
+
+```powershell
+$revokeBody = @{
+  credentialHash = $hash
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/api/credentials/revoke" -ContentType "application/json" -Body $revokeBody
+Invoke-RestMethod "http://127.0.0.1:5000/api/credentials/verify/$hash"
 ```
 
----
+Expected:
 
-### Step 7: Batch Upload Test
+- Revoke returns `ok: true`.
+- Follow-up verification returns `revoked: true`.
 
-```bash
-curl -X POST http://localhost:5000/api/institutions/batches \
-  -H "Content-Type: application/json" \
-  -d '{
-    "issuerId": "UNIVERSITY-2024",
-    "batchName": "CS Graduates 2024",
-    "credentials": [
-      {"studentId": "STUDENT-002", "credentialData": "Master of AI - Distinction"},
-      {"studentId": "STUDENT-003", "credentialData": "PhD in Data Science"}
-    ]
-  }'
+## Document Storage Test
+
+Upload a small file through the frontend Institution Portal, or call the backend multipart endpoint:
+
+```powershell
+# Use the frontend for the easiest manual document test.
+# Backend endpoint: POST /api/ipfs/upload with multipart field name "file".
 ```
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "batchId": "batch-...",
-  "count": 2
-}
+Expected:
+
+- Upload returns a generated `cid` such as `file-...`.
+- After credential issue, `/api/documents` lists stored metadata/data when PostgreSQL or in-memory storage contains the document.
+
+## Admin Endpoint Tests
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:5000/api/admin/stats"
+Invoke-RestMethod "http://127.0.0.1:5000/api/admin/students"
+Invoke-RestMethod "http://127.0.0.1:5000/api/admin/issuers"
+Invoke-RestMethod "http://127.0.0.1:5000/api/admin/credentials"
+Invoke-RestMethod "http://127.0.0.1:5000/api/admin/batches"
+Invoke-RestMethod "http://127.0.0.1:5000/api/documents"
 ```
 
----
+Expected:
 
-### Step 8: Revoke a Credential (Test Revocation)
+- JSON with `ok: true`.
+- Lists may be empty in a new in-memory session.
 
-```bash
-curl -X POST http://localhost:5000/api/credentials/revoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "credentialHash": "YOUR_HASH",
-    "issuerId": "UNIVERSITY-2024"
-  }'
-```
+## Frontend UI Tests
 
-**Expected Response:**
-```json
-{
-  "ok": true,
-  "credentialHash": "abc123...",
-  "blockchain": {
-    "revoked": true,
-    "txHash": "0x..."
-  },
-  "status": "revoked"
-}
-```
+### Login
 
-Now verify again - it should show `revoked: true` with a high risk score.
+1. Open `http://localhost:3000`.
+2. Log in as `admin/admin123`.
+3. Confirm the header displays username and role.
 
----
+### Institution Portal
 
-## UI Testing Steps
+1. Issue one credential.
+2. Copy the success hash.
+3. Use batch upload with lines in `StudentID|CredentialData` format.
+4. Load credentials for revocation.
 
-### 1. Institution Portal (Issue Credentials)
+### Employer Verify
 
-1. Open http://localhost:3000
-2. Click **Institution Portal** tab
-3. Enter:
-   - **Issuer ID:** `UNIVERSITY-2024`
-   - **Student ID:** `TEST-STUDENT-001`
-   - **Credential Data:** `Bachelor of Engineering`
-4. Click **Issue Credential**
-5. **Verify:** Success message appears with credential hash
+1. Paste a credential hash.
+2. Provide student and issuer IDs when available.
+3. Confirm blockchain status, revocation status, risk score, duplicate status, and trust rank.
 
-### 2. Student Identity (View Credentials)
+### Student Identity
 
-1. Click **Student Identity** tab
-2. Enter **Student ID:** `TEST-STUDENT-001`
-3. Click **Load Profile**
-4. **Verify:**
-   - DID is displayed
-   - Credential appears in the list
-   - Risk score is shown (20-40 range)
+1. Enter a student ID that has issued credentials.
+2. Confirm DID, credential count, credential cards, and student risk score.
 
-### 3. ZKP Tools (Privacy Verification)
+### ZKP Tools
 
-1. Click **ZKP Tools** tab
-2. Enter:
-   - **Credential Hash:** (from Step 1)
-   - **Student ID:** `TEST-STUDENT-001`
-3. Click **Generate ZKP Proof**
-4. **Verify:**
-   - Commitment is generated
-   - Nonce is generated
-   - Both values are displayed
+1. Generate a proof for an existing credential.
+2. Verify with full hash/student/nonce/commitment data.
+3. Try commitment-only verification after storing the commitment.
 
-### 4. Employer Verification
+### Admin Dashboard
 
-1. Click **Employer Verification** tab
-2. Enter:
-   - **Credential Hash:** (from Step 1)
-   - **Student ID:** `TEST-STUDENT-001`
-   - **Issuer ID:** `UNIVERSITY-2024`
-3. Click **Verify Credential**
-4. **Verify:**
-   - ✅ Blockchain status shows "Exists"
-   - ✅ Status shows "Active"
-   - Risk score is displayed
-   - Trust rank is shown (1-5 stars)
-
----
-
-## Expected Results
-
-### Risk Score Categories
-
-| Score Range | Category | Meaning |
-|-------------|----------|---------|
-| 0-30 | 🟢 Low Risk | Normal credential |
-| 31-60 | 🟡 Medium Risk | Slightly suspicious |
-| 61-80 | 🟠 High Risk | Suspicious patterns |
-| 81-100 | 🔴 Critical Risk | Likely fraudulent |
-
-### Test Scenarios & Expected Outcomes
-
-| Test | Expected Result |
-|------|-----------------|
-| Issue valid credential | ✅ Success, risk score 20-40 |
-| Verify valid credential | ✅ Exists, ✅ Active, risk score 20-40 |
-| Verify revoked credential | ✅ Exists, 🔴 Revoked, risk score 70+ |
-| Verify non-existent hash | ❌ Not Found |
-| Issue duplicate credential | ✅ Exists, ⚠️ Duplicate flag, elevated risk |
-| ZKP with correct nonce | ✅ ZKP Verified |
-| ZKP with wrong nonce | ❌ ZKP Invalid |
-| Batch upload 100+ credentials | ✅ Success, risk scores elevated for bulk pattern |
-
----
+1. Open all dashboard tabs.
+2. Confirm stats, students, issuers, credentials, documents, and batches render.
+3. Use delete actions only on disposable test data.
 
 ## Troubleshooting
 
-### "Failed to fetch" Error
-**Cause:** Backend not running or wrong port
-**Fix:**
-```bash
-cd backend
-npm run dev
-```
+### Backend cannot write to blockchain
 
-### "Contract not deployed" Error
-**Cause:** Smart contract needs deployment
-**Fix:**
-```bash
-cd blockchain
-npx hardhat run scripts/deploy.js --network localhost
-```
+- Confirm Hardhat is running on `127.0.0.1:8545`.
+- Redeploy the contract.
+- Confirm `backend/src/contract/CredentialRegistry.json` has a valid address.
+- Confirm `ISSUER_PRIVATE_KEY` is set for a local Hardhat account.
+- Restart the backend after changes.
 
-### Risk Score Not Appearing
-**Cause:** AI service not running
-**Fix:**
-```bash
-cd ai-service
-python -m uvicorn main:app --port 8000
-```
+### Login fails
 
-### "Nonce too low" Error
-**Cause:** Hardhat was restarted
-**Fix:** Restart backend after deploying contract
-```bash
-cd backend
-npm run dev
-```
+- Confirm auth service is running on `127.0.0.1:8001`.
+- Restart the auth service.
+- Delete the local `auth.db` only if you intentionally want to reset auth data.
 
----
+### Risk score is missing
 
-## Quick Test Script
+- Confirm AI service is running on `127.0.0.1:8000`.
+- Check backend logs for `AI service unavailable`.
+- Use `simple_main.py` if Python package compatibility blocks the main AI service.
 
-Save this as `test.sh` and run it:
+### Data disappears
 
-```bash
-#!/bin/bash
+- The backend is likely running in memory mode.
+- Start PostgreSQL and set backend DB variables for persistence.
 
-echo "=== DECAID Quick Test ==="
+### Frontend dashboard data seems incomplete
 
-# Health checks
-echo "Checking services..."
-curl -s http://localhost:5000/health | jq .
-curl -s http://localhost:8000/health | jq .
-
-# Issue credential
-echo "Issuing credential..."
-RESPONSE=$(curl -s -X POST http://localhost:5000/api/credentials/issue \
-  -H "Content-Type: application/json" \
-  -d '{"studentId":"TEST-001","issuerId":"UNI-TEST","credentialData":"Test Degree"}')
-
-HASH=$(echo $RESPONSE | jq -r '.credentialHash')
-echo "Hash: $HASH"
-
-# Verify
-echo "Verifying..."
-curl -s "http://localhost:5000/api/verify/by-hash/$HASH?studentId=TEST-001&issuerId=UNI-TEST" | jq .
-
-echo "=== Test Complete ==="
-```
-
----
-
-## Summary
-
-If all tests pass, your DECAID system is working correctly:
-
-- ✅ Credentials can be issued and stored on blockchain
-- ✅ AI fraud detection provides risk scores
-- ✅ Zero-knowledge proofs enable privacy-preserving verification
-- ✅ Student DIDs aggregate credentials
-- ✅ Institution trust rankings work
-- ✅ Batch uploads function correctly
-- ✅ Revocation marks credentials properly
+- Some frontend paths are still being aligned with the backend. Use the backend admin endpoints directly to confirm stored data.

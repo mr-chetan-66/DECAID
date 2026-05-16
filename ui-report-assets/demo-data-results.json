@@ -1,0 +1,375 @@
+{
+  "generatedAt": "2026-05-16T07:44:09.739Z",
+  "users": {
+    "admin": {
+      "username": "admin",
+      "password": "admin123",
+      "role": "admin"
+    },
+    "student": {
+      "username": "demo-student",
+      "password": "demo12345",
+      "role": "student",
+      "suggestedStudentId": "STU-DEMO-001"
+    },
+    "institution": {
+      "username": "demo-institution",
+      "password": "demo12345",
+      "role": "institution",
+      "suggestedIssuerId": "UNIV-2026"
+    },
+    "employer": {
+      "username": "demo-employer",
+      "password": "demo12345",
+      "role": "employer"
+    }
+  },
+  "credentials": {
+    "safe": {
+      "input": {
+        "studentId": "STU-DEMO-001",
+        "issuerId": "UNIV-2026",
+        "credentialData": "Bachelor of Computer Science, Certificate Number CS-2026-1001, CGPA 8.9, Issued May 2026"
+      },
+      "result": {
+        "ok": true,
+        "credentialHash": "346fb692f6b109c55e54cd539672611a1549df6a5f9acf917446ceb3c394a42c",
+        "txHash": "0xbd1c7e078b6504a4d9d060f097786a161e427a36f8b3d23c158b9803d6e3abc9",
+        "contentDuplicateDetected": false,
+        "zkpCommitment": null,
+        "zkpNonce": null
+      }
+    },
+    "fraud_first": {
+      "input": {
+        "studentId": "STU-FRAUD-001",
+        "issuerId": "UNIV-2026",
+        "credentialData": "Bachelor of Commerce, Certificate Number DUP-2026-4242"
+      },
+      "result": {
+        "ok": true,
+        "credentialHash": "31c4f281967f1c74aa662aa46a9907c38dd70cbb8fca8e65a4e3a1b100452443",
+        "txHash": "0xb2595ac67d5444906da54369a15c0f161174054f127dd2ef61da2f95bfb5ecf8",
+        "contentDuplicateDetected": false,
+        "zkpCommitment": null,
+        "zkpNonce": null
+      }
+    },
+    "fraud_second": {
+      "input": {
+        "studentId": "STU-FRAUD-002",
+        "issuerId": "UNIV-2026",
+        "credentialData": "Bachelor of Commerce, Certificate Number DUP-2026-4242"
+      },
+      "result": {
+        "ok": true,
+        "credentialHash": "60545be1fb2803c199ceeec49ea5d90384e50b168d4b00c45b9fc1827f3583fb",
+        "txHash": "0x5bb8d2ab11e74db831e3449b1cd51228cc1e8fb7b2dfa961df7e8452c1597c4a",
+        "contentDuplicateDetected": true,
+        "zkpCommitment": null,
+        "zkpNonce": null
+      }
+    },
+    "fraud_content_first": {
+      "input": {
+        "studentId": "STU-FRAUD-A1",
+        "issuerId": "UNIV-2026",
+        "credentialData": "Master of Business Administration, Registration Number REG-DUP-2026-9001"
+      },
+      "result": {
+        "ok": true,
+        "credentialHash": "213d6a7e33ff6ef376eda6de065b44926100a64a10a6a6d63cacc20284fba2db",
+        "txHash": "0xbe356351fb5dc9cdeae3e0097ecdc360604f981d8f37f4b55e3b25b1c7a0848b",
+        "contentDuplicateDetected": false,
+        "zkpCommitment": null,
+        "zkpNonce": null
+      }
+    },
+    "fraud_content_second": {
+      "input": {
+        "studentId": "STU-FRAUD-B9",
+        "issuerId": "UNIV-2026",
+        "credentialData": "Master of Business Administration, Registration Number REG-DUP-2026-9001"
+      },
+      "result": {
+        "ok": true,
+        "credentialHash": "92d6a915e39aae135001b922a79a852d071c7b84ce064c5c57f8b8ce2f6f5ea6",
+        "txHash": "0x3403af0a31ae0e40c889f821a12c012b78da11041d7e936c0e0567e36089bcc5",
+        "contentDuplicateDetected": true,
+        "zkpCommitment": null,
+        "zkpNonce": null
+      }
+    }
+  },
+  "batch": {
+    "ok": true,
+    "batchId": "BATCH-DEMO-2026",
+    "count": 2
+  },
+  "document": {
+    "ok": true,
+    "document": {
+      "credentialHash": "346fb692f6b109c55e54cd539672611a1549df6a5f9acf917446ceb3c394a42c",
+      "ipfsCid": "file-1778917449570-2020gxnc3",
+      "fileData": "REVDQUlEIGRlbW8gZG9jdW1lbnQgZm9yIFNUVS1ERU1PLTAwMSBjcmVkZW50aWFsIHZlcmlmaWNhdGlvbi4=",
+      "filename": "demo-transcript.txt",
+      "contentType": "text/plain",
+      "fileSize": 62,
+      "studentId": "STU-DEMO-001",
+      "issuerId": "UNIV-2026",
+      "uploadedAt": "2026-05-16T07:44:09.575Z"
+    }
+  },
+  "zkp": {
+    "ok": true,
+    "credentialHash": "346fb692f6b109c55e54cd539672611a1549df6a5f9acf917446ceb3c394a42c",
+    "commitment": "a965ca8604637740e5f8e2cc3ad97e60f92343e3383bc44779f93e26b93bae64",
+    "nonce": "b63b90a5-3f66-4ba9-886a-141a26b14525",
+    "algorithm": "SHA-256-commitment-v1"
+  },
+  "zkpStore": {
+    "ok": true,
+    "message": "ZKP commitment stored successfully"
+  },
+  "verification": {
+    "safe": {
+      "ok": true,
+      "credentialHash": "346fb692f6b109c55e54cd539672611a1549df6a5f9acf917446ceb3c394a42c",
+      "ipfsCid": null,
+      "blockchain": {
+        "exists": true,
+        "issuerAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "issuedAt": 1778917447,
+        "revoked": false
+      },
+      "risk": {
+        "ok": true,
+        "riskScore": 30,
+        "model": "hybrid_isolation_forest",
+        "riskLevel": "MEDIUM",
+        "reasons": [
+          "Medium trust issuer"
+        ],
+        "aiScore": 20,
+        "ruleScore": 10
+      },
+      "trustRank": 4,
+      "trustSignals": {
+        "totalIssuedAttempts": 4,
+        "totalIssuedOnChain": 4,
+        "chainSuccessRate": 1,
+        "chainErrorRate": 0,
+        "avgRisk": 57.5,
+        "revocations": 0
+      },
+      "duplicateDetected": false,
+      "contentDuplicateDetected": false,
+      "zkp": {
+        "status": "not_provided"
+      }
+    },
+    "fraud": {
+      "ok": true,
+      "credentialHash": "60545be1fb2803c199ceeec49ea5d90384e50b168d4b00c45b9fc1827f3583fb",
+      "ipfsCid": null,
+      "blockchain": {
+        "exists": true,
+        "issuerAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "issuedAt": 1778917449,
+        "revoked": false
+      },
+      "risk": {
+        "ok": true,
+        "riskScore": 85,
+        "model": "test_mode_high_risk",
+        "riskLevel": "HIGH",
+        "reasons": [
+          "Test mode: High risk pattern detected"
+        ],
+        "aiScore": 25,
+        "ruleScore": 60
+      },
+      "trustRank": 4,
+      "trustSignals": {
+        "totalIssuedAttempts": 4,
+        "totalIssuedOnChain": 4,
+        "chainSuccessRate": 1,
+        "chainErrorRate": 0,
+        "avgRisk": 57.5,
+        "revocations": 0
+      },
+      "duplicateDetected": false,
+      "contentDuplicateDetected": true,
+      "zkp": {
+        "status": "not_provided"
+      }
+    },
+    "fraudContent": {
+      "ok": true,
+      "credentialHash": "92d6a915e39aae135001b922a79a852d071c7b84ce064c5c57f8b8ce2f6f5ea6",
+      "ipfsCid": null,
+      "blockchain": {
+        "exists": true,
+        "issuerAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "issuedAt": 1778917478,
+        "revoked": false
+      },
+      "risk": {
+        "ok": true,
+        "riskScore": 65,
+        "model": "hybrid_isolation_forest",
+        "riskLevel": "HIGH",
+        "reasons": [
+          "A unique credential identifier was reused for a different student",
+          "Medium trust issuer"
+        ],
+        "aiScore": 20,
+        "ruleScore": 45
+      },
+      "trustRank": 4,
+      "trustSignals": {
+        "totalIssuedAttempts": 4,
+        "totalIssuedOnChain": 4,
+        "chainSuccessRate": 1,
+        "chainErrorRate": 0,
+        "avgRisk": 57.5,
+        "revocations": 0
+      },
+      "duplicateDetected": false,
+      "contentDuplicateDetected": true,
+      "zkp": {
+        "status": "not_provided"
+      }
+    }
+  },
+  "studentProfile": {
+    "ok": true,
+    "studentId": "STU-DEMO-001",
+    "did": "did:decaid:06dc3d19-b556-4e3a-9390-626692b9c385",
+    "credentialCount": 1,
+    "studentRiskScore": 30,
+    "credentials": [
+      {
+        "batchId": "individual-credential",
+        "credentialHash": "346fb692f6b109c55e54cd539672611a1549df6a5f9acf917446ceb3c394a42c",
+        "issuerId": "UNIV-2026",
+        "certificateNumber": null,
+        "ipfsCid": null,
+        "ipfsError": null,
+        "txHash": "0xbd1c7e078b6504a4d9d060f097786a161e427a36f8b3d23c158b9803d6e3abc9",
+        "chainError": null,
+        "riskScore": null,
+        "riskModel": null,
+        "aiError": null,
+        "createdAt": "2026-05-16T07:44:07.236Z",
+        "blockchain": {
+          "exists": true,
+          "issuerAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "issuedAt": 1778917447,
+          "revoked": false
+        },
+        "risk": {
+          "ok": true,
+          "riskScore": 30,
+          "model": "hybrid_isolation_forest",
+          "riskLevel": "MEDIUM",
+          "reasons": [
+            "Medium trust issuer"
+          ],
+          "aiScore": 20,
+          "ruleScore": 10
+        },
+        "trustRank": 4,
+        "trustSignals": {
+          "totalIssuedAttempts": 4,
+          "totalIssuedOnChain": 4,
+          "chainSuccessRate": 1,
+          "chainErrorRate": 0,
+          "avgRisk": 57.5,
+          "revocations": 0
+        },
+        "duplicateDetected": false
+      }
+    ]
+  },
+  "adminStats": {
+    "ok": true,
+    "stats": {
+      "totalStudents": 1,
+      "totalIssuers": 1,
+      "totalCredentials": 7,
+      "totalDocuments": 1,
+      "totalBatches": 1
+    }
+  },
+  "adminCredentials": {
+    "ok": true,
+    "credentials": [
+      {
+        "credential_hash": "ab8f66a1beb7e613e7a74828a8d9f7ab92381258a1798dc3f38d19aba89d0308",
+        "student_id": "STU-BATCH-001",
+        "issuer_id": "UNIV-2026",
+        "on_chain": true,
+        "created_at": "2026-05-16T07:44:09.410Z"
+      },
+      {
+        "credential_hash": "b59a682982fab86ab3192212cb7d51746539e65d748f74417b0acc37ae7f18a7",
+        "student_id": "STU-BATCH-002",
+        "issuer_id": "UNIV-2026",
+        "on_chain": true,
+        "created_at": "2026-05-16T07:44:09.564Z"
+      },
+      {
+        "credential_hash": "346fb692f6b109c55e54cd539672611a1549df6a5f9acf917446ceb3c394a42c",
+        "student_id": "STU-DEMO-001",
+        "issuer_id": "UNIV-2026",
+        "on_chain": true,
+        "created_at": "2026-05-16T07:44:07.236Z"
+      },
+      {
+        "credential_hash": "31c4f281967f1c74aa662aa46a9907c38dd70cbb8fca8e65a4e3a1b100452443",
+        "student_id": "STU-FRAUD-001",
+        "issuer_id": "UNIV-2026",
+        "on_chain": true,
+        "created_at": "2026-05-16T07:44:07.963Z"
+      },
+      {
+        "credential_hash": "60545be1fb2803c199ceeec49ea5d90384e50b168d4b00c45b9fc1827f3583fb",
+        "student_id": "STU-FRAUD-002",
+        "issuer_id": "UNIV-2026",
+        "on_chain": true,
+        "created_at": "2026-05-16T07:44:08.688Z"
+      },
+      {
+        "credential_hash": "213d6a7e33ff6ef376eda6de065b44926100a64a10a6a6d63cacc20284fba2db",
+        "student_id": "STU-FRAUD-A1",
+        "issuer_id": "UNIV-2026",
+        "on_chain": true,
+        "created_at": "2026-05-16T07:44:35.494Z"
+      },
+      {
+        "credential_hash": "92d6a915e39aae135001b922a79a852d071c7b84ce064c5c57f8b8ce2f6f5ea6",
+        "student_id": "STU-FRAUD-B9",
+        "issuer_id": "UNIV-2026",
+        "on_chain": true,
+        "created_at": "2026-05-16T07:44:35.687Z"
+      }
+    ]
+  },
+  "adminDocuments": {
+    "ok": true,
+    "documents": [
+      {
+        "credentialHash": "346fb692f6b109c55e54cd539672611a1549df6a5f9acf917446ceb3c394a42c",
+        "ipfsCid": "file-1778917449570-2020gxnc3",
+        "fileData": "REVDQUlEIGRlbW8gZG9jdW1lbnQgZm9yIFNUVS1ERU1PLTAwMSBjcmVkZW50aWFsIHZlcmlmaWNhdGlvbi4=",
+        "filename": "demo-transcript.txt",
+        "contentType": "text/plain",
+        "fileSize": 62,
+        "studentId": "STU-DEMO-001",
+        "issuerId": "UNIV-2026",
+        "uploadedAt": "2026-05-16T07:44:09.575Z"
+      }
+    ]
+  }
+}

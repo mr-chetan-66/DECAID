@@ -100,6 +100,8 @@ export async function initDatabase() {
 
         certificate_number VARCHAR(255),
 
+        content_signature VARCHAR(64),
+
         ipfs_cid VARCHAR(255),
 
         ipfs_error TEXT,
@@ -119,6 +121,14 @@ export async function initDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
       )
+
+    `);
+
+    await client.query(`
+
+      ALTER TABLE batch_results
+
+      ADD COLUMN IF NOT EXISTS content_signature VARCHAR(64)
 
     `);
 
@@ -400,7 +410,7 @@ export async function addBatchResult(result) {
 
       batchId, studentId, issuerId, certificateNumber, ipfsCid, ipfsError,
 
-      credentialHash, txHash, chainError, riskScore, riskModel, aiError
+      contentSignature, credentialHash, txHash, chainError, riskScore, riskModel, aiError
 
     } = result;
 
@@ -410,13 +420,13 @@ export async function addBatchResult(result) {
 
       `INSERT INTO batch_results 
 
-       (batch_id, student_id, issuer_id, certificate_number, ipfs_cid, ipfs_error,
+       (batch_id, student_id, issuer_id, certificate_number, content_signature, ipfs_cid, ipfs_error,
 
         credential_hash, tx_hash, chain_error, risk_score, risk_model, ai_error)
 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 
-      [batchId, studentId, issuerId, certificateNumber, ipfsCid, ipfsError,
+      [batchId, studentId, issuerId, certificateNumber, contentSignature, ipfsCid, ipfsError,
 
        credentialHash, txHash, chainError, riskScore, riskModel, aiError]
 
@@ -521,6 +531,36 @@ export async function findResultsByHash(credentialHash) {
   } catch (error) {
 
     // Database unavailable, return empty array
+
+    return [];
+
+  }
+
+}
+
+
+
+export async function findResultsByContentSignature(contentSignature) {
+
+  try {
+
+    const result = await pool.query(
+
+      `SELECT br.*, b.started_at as batch_started_at
+
+       FROM batch_results br
+
+       JOIN batches b ON br.batch_id = b.batch_id
+
+       WHERE br.content_signature = $1`,
+
+      [contentSignature.toLowerCase()]
+
+    );
+
+    return result.rows;
+
+  } catch (error) {
 
     return [];
 

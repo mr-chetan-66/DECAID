@@ -1,738 +1,317 @@
 # DECAID Presentation Script
-## Decentralized Academic Identity Verification System
 
----
+## Title
 
-## Introduction (2-3 minutes)
+DECAID: Decentralized Academic Identity And Credential Risk Assessment System
 
-**Good morning/afternoon. Today, I'm presenting DECAID - a Decentralized Academic Identity verification system designed to solve the growing problem of academic credential fraud.**
+## Opening
 
-### The Problem We're Solving
+Good morning. Our project is DECAID, a local working prototype for academic credential verification.
 
-**Academic credential fraud is a massive global issue:**
-- According to recent studies, over 20% of job applicants falsify their academic credentials
-- Fake degrees and certificates cost employers billions annually
-- Traditional verification processes are slow, expensive, and unreliable
-- Institutions struggle to maintain secure, tamper-proof credential records
-- Students have no control over their own academic identity
+The problem is simple: academic credentials are still difficult to verify quickly, privately, and reliably. Employers, universities, and agencies often depend on manual checks, emails, scanned PDFs, and trust in the applicant. That creates delays and opens the door to forged documents or reused credential identifiers.
 
-**Current verification methods are broken:**
-- Manual phone calls to universities (takes weeks)
-- Physical document verification (can be forged)
-- Centralized databases (single point of failure, privacy concerns)
-- No standardization across institutions
+DECAID shows how this process can be improved with a combined system:
 
-### Why We Need DECAID
+- blockchain for tamper-evident credential status,
+- AI-assisted fraud-risk scoring,
+- role-based identity workflows,
+- student DIDs,
+- document attachment,
+- and zero-knowledge-style commitment verification.
 
-**DECAID addresses these challenges by:**
-- Providing instant, verifiable credential authentication
-- Using blockchain technology for tamper-proof records
-- Enabling privacy-preserving verification through Zero-Knowledge Proofs
-- Detecting fraud using AI-powered risk analysis
-- Giving students control over their academic identity
-- Reducing verification costs from weeks to seconds
+## One-Sentence Project Summary
 
----
+DECAID lets institutions issue credentials, students manage identity and proof data, employers verify credentials, and admins inspect the system through a multi-service web app.
 
-## Feature 1: Blockchain-Based Credential Registry (3-4 minutes)
+## Current Architecture
 
-### What It Does
+The local project has five main runtime components.
 
-**DECAID uses Ethereum blockchain technology to create an immutable record of academic credentials.**
+1. The React frontend runs on port `3000`.
+2. The Express backend API runs on port `5000`.
+3. The AI fraud-risk service runs on port `8000`.
+4. The authentication service runs on port `8001`.
+5. The Hardhat blockchain runs on port `8545`.
 
-When an institution issues a credential:
-1. The credential data is hashed using SHA-256
-2. The hash is stored on the blockchain via a smart contract
-3. The hash serves as a permanent, tamper-proof fingerprint
-4. Anyone can verify the credential exists on-chain
+PostgreSQL is optional. If it is not configured, the backend uses in-memory storage so the demo remains easy to run.
 
-### Problem It Solves
+## Technology Stack
 
-**Traditional credential storage vulnerabilities:**
-- Centralized databases can be hacked or manipulated
-- Paper certificates can be forged or altered
-- No audit trail of credential issuance
-- Institutions can't prove authenticity beyond doubt
+- Frontend: React, Vite, Tailwind CSS.
+- Backend: Node.js, Express, Zod, Ethers.js.
+- Auth: FastAPI, SQLite, bcrypt, JWT.
+- AI: FastAPI, scikit-learn Isolation Forest, rule-based signals.
+- Blockchain: Solidity, Hardhat, local Ethereum JSON-RPC.
+- Database: PostgreSQL, with in-memory fallback.
 
-### Why We Need This
+## Feature 1: Credential Issuance
 
-**Blockchain provides:**
-- **Immutability**: Once recorded, credentials cannot be altered
-- **Transparency**: Anyone can verify credential existence
-- **Decentralization**: No single point of failure
-- **Audit Trail**: Complete history of all issued credentials
-- **Trust**: Mathematical proof of authenticity
+Institution users can issue a credential by entering:
 
-**Technical Implementation:**
-- Smart contract: CredentialRegistry.sol
-- Hash algorithm: SHA-256
-- Network: Ethereum (local for development, mainnet for production)
-- Storage: Credential hashes only (no personal data on-chain)
+- issuer ID,
+- student ID,
+- credential data,
+- and optionally a document.
 
----
+The backend hashes the credential using:
 
-## Feature 2: AI-Powered Fraud Detection (3-4 minutes)
+```text
+sha256(studentId:issuerId:credentialData)
+```
 
-### What It Does
+That hash is written to the smart contract. The raw credential data is not stored on chain.
 
-**DECAID uses machine learning to detect suspicious credential patterns and potential fraud.**
+Why it matters:
 
-The system analyzes multiple risk factors:
-- Duplicate credential detection
-- Issuer trust scoring
-- Behavioral pattern analysis
-- Temporal anomaly detection
-- Batch issuance monitoring
+- The blockchain stores a tamper-evident proof of existence.
+- The student and employer can verify status later.
+- The credential can be revoked if needed.
 
-### Problem It Solves
+## Feature 2: Blockchain Registry
 
-**Fraud detection challenges:**
-- Manual review is impossible at scale
-- Fraudsters use sophisticated techniques
-- Traditional rules miss emerging patterns
-- No real-time fraud prevention
+The `CredentialRegistry` smart contract supports:
 
-### Why We Need This
+- issue,
+- revoke,
+- verify,
+- authorize issuer,
+- deauthorize issuer,
+- and check authorized issuer status.
 
-**AI-powered detection provides:**
-- **Real-time risk scoring**: 0-100 scale for credential trustworthiness
-- **Pattern recognition**: Detects anomalies humans miss
-- **Behavioral analysis**: Identifies suspicious issuance patterns
-- **Adaptive learning**: Improves over time with more data
-- **Explainable AI**: Provides reasons for risk scores
+For the demo, duplicate issue calls are allowed so our fraud-risk tests can detect duplicate behavior. In a production version, duplicate prevention should be enforced again at contract level.
 
-**Risk Factors Analyzed:**
-1. **Duplicate Detection**: Same hash issued multiple times (+40 points)
-2. **Issuer Trust**: Low-trust issuers increase risk (+10-20 points)
-3. **Rapid Issuance**: Multiple credentials in short time (+10-25 points)
-4. **Batch Size**: Large bulk issuances (+15 points)
-5. **ID Patterns**: Suspiciously short IDs (+10-20 points)
+## Feature 3: AI Fraud Risk
 
-**Technical Implementation:**
-- Algorithm: Isolation Forest (unsupervised learning)
-- Hybrid approach: Rule-based + AI scoring
-- Service: FastAPI AI service on port 8000
-- Caching: Redis-like in-memory cache for performance
+The AI service returns a risk score from `0` to `100`.
 
----
+The score combines:
 
-## Feature 3: Zero-Knowledge Proofs (ZKP) (3-4 minutes)
+- rule-based checks,
+- duplicate hash flags,
+- reused unique credential identifiers,
+- issuer trust features,
+- batch size,
+- issuance timing,
+- student credential count,
+- and Isolation Forest anomaly scoring.
 
-### What It Does
+The duplicate-content detection is important. If the same certificate number, registration number, roll number, transcript number, document hash, or serial number appears for two different students, DECAID can raise the risk.
 
-**DECAID enables privacy-preserving credential verification using Zero-Knowledge Proofs.**
+## Feature 4: Student DID And Profile
 
-How it works:
-1. Student generates a cryptographic commitment (hash of credential + secret nonce)
-2. Employer receives only the commitment (no actual credential data)
-3. Student reveals the nonce to prove knowledge without revealing data
-4. Verification confirms authenticity without accessing sensitive information
+Each student can be assigned a decentralized identifier in this format:
 
-### Problem It Solves
+```text
+did:decaid:<uuid>
+```
 
-**Privacy concerns in traditional verification:**
-- Employers access full student academic records
-- Institutions share detailed student information
-- No control over what data is shared
-- Privacy regulations (GDPR, FERPA) compliance issues
+The Student Identity view shows:
 
-### Why We Need This
+- DID,
+- credential count,
+- student risk score,
+- credential cards,
+- blockchain status,
+- issuer trust,
+- and available document records.
 
-**ZKP provides:**
-- **Privacy**: Verify without revealing actual data
-- **Control**: Students choose what to share
-- **Compliance**: Meets privacy regulations
-- **Security**: No sensitive data transmitted
-- **Trust**: Mathematical proof of authenticity
+## Feature 5: Employer Verification
 
-**Use Cases:**
-- Job applications without full transcript access
-- Background checks with minimal data sharing
-- Cross-border verification with privacy protection
-- Third-party verification without data exposure
+The employer verifies a credential by entering the credential hash, and optionally the student and issuer IDs.
 
-**Technical Implementation:**
-- Algorithm: SHA-256 commitment scheme
-- Components: Commitment + Nonce
-- Verification: On-chain hash comparison
-- Future: zk-SNARKs for production-grade privacy
+The verification result shows:
 
----
+- whether the hash exists on chain,
+- whether it has been revoked,
+- issuer address,
+- fraud-risk score,
+- risk level and reasons,
+- duplicate status,
+- trust rank,
+- and raw JSON for technical review.
 
-## Feature 4: Role-Based Authentication System (2-3 minutes)
+## Feature 6: ZKP Commitment Demo
 
-### What It Does
+DECAID includes a zero-knowledge-style commitment flow.
 
-**DECAID provides a secure authentication system with role-based access control.**
+The system computes:
 
-User roles:
-- **Students**: View credentials, generate ZKPs, manage DID
-- **Institutions**: Issue credentials, manage batches, view statistics
-- **Employers**: Verify credentials, assess risk scores
-- **Admins**: Manage system, view all data, configure settings
+```text
+commitment = sha256(credentialHash:studentId:nonce)
+```
 
-### Problem It Solves
+This lets a student create a proof that can be verified without directly showing the credential content. The current implementation is a commitment-based demo, not a full zk-SNARK system.
 
-**Access control challenges:**
-- Unauthorized credential issuance
-- Data privacy violations
-- No audit trail of who accessed what
-- Inability to manage different user types
+## Feature 7: Authentication And Roles
 
-### Why We Need This
+The current frontend uses a separate FastAPI auth service.
 
-**Role-based authentication provides:**
-- **Security**: Only authorized users can perform actions
-- **Privacy**: Students can't see other students' data
-- **Accountability**: Audit trail of all actions
-- **Flexibility**: Easy to add new roles and permissions
-- **Compliance**: Meets security standards
+Users can register or log in as:
 
-**Technical Implementation:**
-- Backend: FastAPI auth service (port 8001)
-- Database: SQLite for user management
-- Authentication: JWT tokens
-- Password hashing: bcrypt
-- Frontend: React AuthContext for state management
+- student,
+- institution,
+- employer,
+- admin.
 
----
+The role controls which tabs are visible. For example:
 
-## Feature 5: Decentralized Identity (DID) (2-3 minutes)
+- employers see verification,
+- students see identity,
+- institutions see issuing tools,
+- admins see all tabs and dashboard data.
 
-### What It Does
+The backend also contains Google OAuth support, but the current frontend demo is connected to the auth service instead.
 
-**DECAID implements Decentralized Identifiers (DID) for students to own their academic identity.**
+## Feature 8: Admin Dashboard
 
-Each student gets:
-- Unique DID: `did:decaid:STUDENT-ID`
-- Portable identity across institutions
-- Self-sovereign credential management
-- Lifetime academic record
+The admin dashboard gives a system-wide view of:
 
-### Problem It Solves
+- total students,
+- total issuers,
+- total credentials,
+- total documents,
+- total batches,
+- detailed credential rows,
+- and delete actions for test data.
 
-**Identity fragmentation:**
-- Students have IDs at every institution
-- No unified academic identity
-- Credentials scattered across systems
-- Students don't own their academic data
+This is useful for demonstrations because it shows the data produced by the other flows.
 
-### Why We Need This
+## Demo Flow
 
-**DID provides:**
-- **Ownership**: Students control their identity
-- **Portability**: Works across all institutions
-- **Persistence**: Lifetime academic record
-- **Interoperability**: Standard identity format
-- **Self-Sovereignty**: No central authority controls identity
+### Demo 1: Login
 
-**Technical Implementation:**
-- DID method: `did:decaid`
-- Storage: Database with DID mapping
-- Resolution: Backend API endpoint
-- Integration: W3C DID standard compatible
+Open `http://localhost:3000`.
 
----
+Log in with:
 
-## Feature 6: Batch Credential Processing (2-3 minutes)
+```text
+username: admin
+password: admin123
+```
 
-### What It Does
+Show that the admin can access all tabs.
 
-**DECAID enables institutions to issue credentials in bulk for efficient processing.**
+### Demo 2: Issue Credential
 
-Features:
-- Upload CSV/text format with student credentials
-- Parallel blockchain transactions
-- Progress tracking and error handling
-- Batch statistics and reporting
+Open Institution Portal.
 
-### Problem It Solves
+Use:
 
-**Scalability challenges:**
-- Manual issuance is time-consuming
-- Graduation ceremonies require thousands of credentials
-- No efficient bulk processing
-- Difficult to track batch progress
+```text
+Issuer ID: UNIV-2024
+Student ID: STU-DEMO-001
+Credential Data: Bachelor of Computer Science, Certificate Number CS-2024-1001
+```
 
-### Why We Need This
+Click Issue Credential and copy the generated hash.
 
-**Batch processing provides:**
-- **Efficiency**: Issue hundreds of credentials at once
-- **Scalability**: Handle large graduation classes
-- **Tracking**: Monitor batch progress in real-time
-- **Error Handling**: Continue even if some fail
-- **Reporting**: Statistics on batch operations
+### Demo 3: Verify Credential
 
-**Technical Implementation:**
-- Format: `studentId|credentialData` per line
-- Processing: Async blockchain transactions
-- Storage: Batch records in database
-- UI: Institution Portal batch upload
+Open Employer Verify.
 
----
+Paste the hash, student ID, and issuer ID.
 
-## Feature 7: Document Storage System (2-3 minutes)
+Point out:
 
-### What It Does
+- blockchain exists,
+- active status,
+- risk score,
+- trust rank,
+- duplicate status.
 
-**DECAID stores credential documents (PDFs, images) with secure access control.**
+### Demo 4: Student Profile
 
-Features:
-- Upload diploma/certificate files
-- Link documents to credential hashes
-- Secure storage with access control
-- Optional IPFS integration for decentralization
+Open Student Identity.
 
-### Problem It Solves
+Search for `STU-DEMO-001`.
 
-**Document management issues:**
-- Physical documents can be lost or damaged
-- No easy way to verify document authenticity
-- Institutions struggle with document storage
-- Students can't access their own documents
-
-### Why We Need This
-
-**Document storage provides:**
-- **Security**: Encrypted storage with access control
-- **Accessibility**: Students can access their documents
-- **Verification**: Documents linked to blockchain hashes
-- **Decentralization**: Optional IPFS for redundancy
-- **Convenience**: Digital certificates always available
-
-**Technical Implementation:**
-- Storage: PostgreSQL database (base64 encoded)
-- Alternative: IPFS for decentralized storage
-- Access control: Role-based permissions
-- Linking: Documents linked to credential hashes
-
----
-
-## Feature 8: Admin Dashboard (2-3 minutes)
-
-### What It Does
-
-**DECAID provides a comprehensive admin dashboard for system management.**
-
-Features:
-- Overview statistics (credentials, users, issuers)
-- Student management (view, delete)
-- Issuer management (trust scores, statistics)
-- Credential management (view, revoke)
-- Document management (view, delete)
-
-### Problem It Solves
-
-**System management challenges:**
-- No visibility into system usage
-- Difficult to manage users and credentials
-- No way to revoke compromised credentials
-- Can't monitor system health
-
-### Why We Need This
-
-**Admin dashboard provides:**
-- **Visibility**: Real-time system statistics
-- **Control**: Manage all system entities
-- **Security**: Revoke compromised credentials
-- **Monitoring**: Track system health and usage
-- **Management**: Easy user and credential administration
-
-**Technical Implementation:**
-- UI: React-based admin interface
-- API: Backend endpoints for all operations
-- Database: Direct database access for management
-- Role: Admin-only access control
-
----
-
-## Technical Architecture (2-3 minutes)
-
-### System Components
-
-**Frontend (React):**
-- URL: http://localhost:3000
-- Framework: React with Vite
-- Routing: React Router v6
-- UI: TailwindCSS with custom components
-- State: React Context API
-
-**Backend (Node.js/Express):**
-- URL: http://127.0.0.1:5000
-- Framework: Express.js
-- Database: PostgreSQL
-- Blockchain: Ethereum (Hardhat local)
-- AI Service: Custom ML service
-
-**Auth Service (FastAPI):**
-- URL: http://127.0.0.1:8001
-- Framework: FastAPI
-- Database: SQLite
-- Authentication: JWT tokens
-- Password hashing: bcrypt
-
-**AI Service (FastAPI):**
-- URL: http://127.0.0.1:8000
-- Framework: FastAPI
-- ML: scikit-learn Isolation Forest
-- Algorithm: Hybrid rule-based + AI
-
-**Blockchain (Ethereum):**
-- Network: Hardhat local (development)
-- Smart Contract: CredentialRegistry.sol
-- Hash: SHA-256
-- Storage: Credential hashes only
-
----
-
-## Technology Stack & Benefits (3-4 minutes)
-
-### Why We Chose These Technologies
-
-**1. React (Frontend Framework)**
-- **What it is:** JavaScript library for building user interfaces
-- **Why we chose it:** Component-based architecture, large ecosystem, excellent performance
-- **How it helps DECAID:**
-  - Enables modular, reusable UI components for different user roles
-  - Fast rendering for real-time verification results
-  - Easy state management for authentication and credential data
-  - Responsive design works on all devices
-
-**2. Node.js & Express (Backend Framework)**
-- **What it is:** JavaScript runtime and web framework
-- **Why we chose it:** Same language as frontend, excellent async I/O, vast npm ecosystem
-- **How it helps DECAID:**
-  - Seamless integration with blockchain libraries (ethers.js)
-  - Handles concurrent verification requests efficiently
-  - Easy integration with PostgreSQL and external APIs
-  - Fast development with JavaScript across full stack
-
-**3. PostgreSQL (Primary Database)**
-- **What it is:** Advanced relational database
-- **Why we chose it:** ACID compliance, JSON support, excellent performance
-- **How it helps DECAID:**
-  - Reliable storage for credential records and user data
-  - JSON support for flexible credential metadata
-  - Transaction support for data integrity
-  - Scalable for large credential volumes
-
-**4. Ethereum & Smart Contracts (Blockchain)**
-- **What it is:** Decentralized blockchain platform with smart contracts
-- **Why we chose it:** Most established blockchain, strong developer tools, security
-- **How it helps DECAID:**
-  - Immutable credential records that cannot be tampered with
-  - Decentralized verification without trusting a single authority
-  - Smart contracts enforce business rules automatically
-  - Transparent audit trail of all credential issuances
-
-**5. FastAPI (Auth & AI Services)**
-- **What it is:** Modern Python web framework
-- **Why we chose it:** Automatic API documentation, type safety, excellent performance
-- **How it helps DECAID:**
-  - Auth service: Secure JWT-based authentication with bcrypt password hashing
-  - AI service: Easy integration with Python ML libraries (scikit-learn)
-  - Automatic OpenAPI documentation for API consumers
-  - Async support for high-performance ML inference
-
-**6. scikit-learn & Isolation Forest (Machine Learning)**
-- **What it is:** Python machine learning library with anomaly detection algorithms
-- **Why we chose it:** Industry-standard, well-documented, efficient for fraud detection
-- **How it helps DECAID:**
-  - Detects fraudulent credential patterns without labeled training data
-  - Identifies anomalies that rule-based systems miss
-  - Provides explainable risk scores with feature importance
-  - Scales to handle large volumes of credential data
-
-**7. SHA-256 (Cryptographic Hashing)**
-- **What it is:** Secure hash algorithm producing 256-bit fingerprints
-- **Why we chose it:** Industry standard, collision-resistant, fast computation
-- **How it helps DECAID:**
-  - Creates unique, tamper-proof identifiers for credentials
-  - Enables verification without storing actual credential data
-  - Basis for Zero-Knowledge Proof commitments
-  - Computationally infeasible to reverse-engineer original data
-
-**8. JWT (JSON Web Tokens)**
-- **What it is:** Standard for secure information transmission
-- **Why we chose it:** Stateless authentication, widely supported, secure
-- **How it helps DECAID:**
-  - Secure authentication without server-side session storage
-  - Encodes user role and permissions in token
-  - Reduces database load for authentication checks
-  - Easy integration across microservices
-
-**9. bcrypt (Password Hashing)**
-- **What it is:** Password hashing function with built-in salt
-- **Why we chose it:** Computationally slow (prevents brute force), adaptive cost
-- **How it helps DECAID:**
-  - Securely stores user passwords with automatic salting
-  - Resistant to rainbow table attacks
-  - Adjustable work factor for future security increases
-  - Industry standard for password security
-
-**10. TailwindCSS (Styling)**
-- **What it is:** Utility-first CSS framework
-- **Why we chose it:** Rapid development, consistent design, small bundle size
-- **How it helps DECAID:**
-  - Professional, modern UI without custom CSS
-  - Responsive design works on all screen sizes
-  - Consistent design system across all components
-  - Fast development with pre-built utility classes
-
-**11. Hardhat (Blockchain Development)**
-- **What it is:** Ethereum development environment
-- **Why we chose it:** Excellent testing, local network, TypeScript support
-- **How it helps DECAID:**
-  - Fast smart contract development and testing
-  - Local blockchain network for development
-  - Automated testing of smart contract logic
-  - Easy deployment to testnets and mainnet
-
-**12. React Router (Client-Side Routing)**
-- **What it is:** Routing library for React applications
-- **Why we chose it:** Declarative routing, excellent documentation, hooks support
-- **How it helps DECAID:**
-  - Role-based route protection (students vs institutions vs employers)
-  - Smooth single-page application experience
-  - Easy navigation between different features
-  - Protected routes for authenticated users only
-
-### Data Flow
-
-1. **Credential Issuance:**
-   Institution → Backend → Blockchain → Database → AI Service
-
-2. **Credential Verification:**
-   Employer → Backend → Blockchain → AI Service → Risk Score
-
-3. **Authentication:**
-   User → Auth Service → JWT Token → Frontend → Backend
-
----
-
-## Security Features (2-3 minutes)
-
-### Multi-Layer Security
-
-**1. Blockchain Security:**
-- Immutable credential records
-- Cryptographic hash verification
-- Smart contract access control
-- No single point of failure
-
-**2. Application Security:**
-- JWT token authentication
-- Role-based access control
-- Password hashing with bcrypt
-- Input validation with Zod
-
-**3. Data Security:**
-- No personal data on blockchain
-- Encrypted document storage
-- Privacy-preserving ZKP verification
-- GDPR/FERPA compliance considerations
-
-**4. Network Security:**
-- CORS configuration
-- Rate limiting (configurable)
-- HTTPS support (production)
-- Secure API endpoints
-
----
-
-## Future Enhancements (1-2 minutes)
-
-### Planned Features
-
-**1. Enhanced ZKP:**
-- Implement zk-SNARKs for production-grade privacy
-- Support for selective disclosure
-- Cross-chain ZKP verification
-
-**2. Mobile Application:**
-- Student mobile app for credential management
-- QR code-based verification
-- Push notifications for new credentials
-
-**3. Integration:**
-- Integration with existing university systems
-- API for third-party verification services
-- Plugin for popular HR systems
-
-**4. Advanced Analytics:**
-- Fraud trend analysis
-- Institution reputation scoring
-- Predictive fraud detection
-
-**5. Multi-Chain Support:**
-- Support for multiple blockchains
-- Cross-chain credential verification
-- Layer 2 solutions for lower costs
-
----
-
-## Conclusion (1-2 minutes)
-
-### Summary
-
-**DECAID represents a comprehensive solution to academic credential fraud by combining:**
-
-- **Blockchain technology** for tamper-proof records
-- **AI-powered fraud detection** for real-time risk assessment
-- **Zero-Knowledge Proofs** for privacy-preserving verification
-- **Decentralized Identity** for student-owned academic profiles
-- **Role-based authentication** for secure access control
-- **Batch processing** for scalable credential issuance
-- **Document storage** for digital certificate management
-- **Admin dashboard** for system administration
-
-### Impact
-
-**DECAID transforms academic credential verification by:**
-- Reducing verification time from weeks to seconds
-- Eliminating credential fraud through blockchain immutability
-- Protecting student privacy through ZKP technology
-- Enabling institutions to issue credentials at scale
-- Providing employers with instant, trustworthy verification
-- Giving students control over their academic identity
-
-### Call to Action
-
-**The system is ready for:**
-- Pilot deployment with partner institutions
-- Integration with existing university systems
-- Production blockchain deployment
-- Mobile application development
-
-**Thank you for your time. I'm happy to answer any questions about DECAID.**
-
----
-
-## Demo Script (Optional - 5-10 minutes)
-
-### Demo 1: Login and Authentication
-1. Show login page with admin credentials
-2. Demonstrate role-based tab access
-3. Show logout functionality
-
-### Demo 2: Credential Issuance
-1. Navigate to Institution Portal
-2. Issue credential to TEST-STUDENT-001
-3. Show blockchain transaction confirmation
-4. Display generated credential hash
-
-### Demo 3: Credential Verification
-1. Navigate to Employer Verify tab
-2. Enter credential hash and student ID
-3. Show verification result with risk score
-4. Explain risk factors displayed
-
-### Demo 4: Student Identity
-1. Navigate to Student Identity tab
-2. Load student profile for TEST-STUDENT-001
-3. Show DID and credential list
-4. Explain on-chain verification status
+Show the DID and credential list.
 
 ### Demo 5: ZKP Tools
-1. Navigate to ZKP Tools tab
-2. Generate ZKP commitment
-3. Verify ZKP proof
-4. Explain privacy-preserving verification
 
-### Demo 6: Admin Dashboard
-1. Navigate to Admin Dashboard
-2. Show system statistics
-3. View students and issuers
-4. Demonstrate credential management
+Open ZKP Tools.
 
----
+Generate a commitment from the credential hash and student ID.
 
-## Q&A Preparation
+Verify the commitment using the nonce.
 
-### Common Questions
+Explain that this demonstrates privacy-preserving proof logic, but full zero-knowledge circuits are future work.
 
-**Q: What happens if the blockchain goes down?**
-A: The backend maintains a database backup. Verification can still work with database records, though blockchain verification would be temporarily unavailable.
+### Demo 6: Fraud Detection
 
-**Q: How do you handle lost private keys?**
-A: Institutions maintain their own private keys. For students, we implement recovery mechanisms through the institution that issued the credential.
+Use `fraud-test-data.json`.
 
-**Q: Is this GDPR compliant?**
-A: Yes. We store only hashes on blockchain (no personal data). Personal data is stored in databases with proper access controls. ZKP enables verification without data sharing.
+Issue two credentials from the same fraud pair:
 
-**Q: What's the cost per credential?**
-A: On Ethereum mainnet, approximately $0.10-0.50 per credential depending on gas prices. Layer 2 solutions can reduce this to pennies.
+- first student with one certificate number,
+- second student with the same certificate number.
 
-**Q: How do institutions integrate?**
-A: We provide REST APIs for integration. Institutions can also use the web interface for manual issuance or batch uploads.
+Verify the second credential and show that the risk reasoning detects reused unique credential content.
 
-**Q: What about existing credentials?**
-A: Institutions can migrate existing credentials by issuing them through DECAID. The system supports bulk import of historical records.
+## Key Technical Point
 
----
+DECAID does not rely on only one security mechanism. It combines several independent signals:
 
-## Technical Specifications
+- blockchain status,
+- issuer behavior,
+- credential duplicate patterns,
+- student identity,
+- document records,
+- and AI/rule risk scoring.
 
-### System Requirements
+That layered approach is the main strength of the project.
 
-**Minimum for Development:**
-- Node.js 18+
-- Python 3.11+
-- PostgreSQL 14+
-- 8GB RAM
-- 20GB storage
+## Known Limitations
 
-**Production Requirements:**
-- Load balancer for frontend
-- Multiple backend instances
-- PostgreSQL cluster
-- Ethereum mainnet or Layer 2
-- Redis for caching
-- CDN for static assets
+This is a final-year local prototype, not a production deployment.
 
-### Performance Metrics
+Current limitations include:
 
-**Current Performance:**
-- Credential issuance: ~2-3 seconds
-- Credential verification: ~1-2 seconds
-- Batch processing: ~100 credentials/minute
-- AI risk scoring: ~500ms
+- some frontend dashboard paths still need complete backend alignment,
+- commitment-only ZKP lookup is memory-backed in the current demo,
+- Google OAuth exists in backend code but is not wired into the current frontend,
+- duplicate contract issuance is allowed for testing,
+- and production security hardening is still required.
 
-**Scalability:**
-- Horizontal scaling for backend
-- Database sharding support
-- CDN for frontend assets
-- Caching for frequent queries
+## Future Work
 
----
+The next version can add:
 
-## References
+- production Google OAuth or institutional SSO,
+- strict smart contract duplicate prevention,
+- persistent ZKP commitment storage,
+- real zk-SNARK selective disclosure,
+- production object storage or IPFS integration,
+- stronger authorization around institution and admin APIs,
+- deployment to a testnet or L2 chain,
+- and integration with university information systems.
 
-### Technologies Used
+## Closing
 
-- **Frontend:** React, Vite, TailwindCSS, React Router
-- **Backend:** Node.js, Express, PostgreSQL
-- **Blockchain:** Ethereum, Hardhat, Solidity
-- **AI:** scikit-learn, FastAPI, NumPy
-- **Auth:** FastAPI, JWT, bcrypt
-- **Cryptography:** SHA-256, Crypto-js
+DECAID demonstrates a practical path toward faster and more trustworthy academic credential verification.
 
-### Standards
+Institutions can issue, students can prove, employers can verify, and admins can audit the system. By combining blockchain, AI risk scoring, and privacy-focused commitments, the project shows how digital academic identity can become more secure and easier to verify.
 
-- **DID:** W3C Decentralized Identifiers
-- **Verifiable Credentials:** W3C VC Data Model
-- **ZKP:** zk-SNARKs (planned)
-- **Privacy:** GDPR, FERPA considerations
+Thank you.
 
----
+## Q And A Notes
 
-## Contact Information
+### Is this a full zero-knowledge proof system?
 
-**Project Repository:** [GitHub URL]
-**Documentation:** [Docs URL]
-**Demo:** [Demo URL]
-**Contact:** [Email]
+No. The current implementation is a SHA-256 commitment proof demo. It demonstrates the verification pattern, while full zk-SNARK selective disclosure is future work.
 
----
+### Is Google OAuth active?
 
-*End of Presentation Script*
+Not in the current frontend. The backend contains Google OAuth routes, but the active UI uses the separate auth service.
+
+### Where are documents stored?
+
+The current backend stores file data directly in memory or PostgreSQL with generated file IDs. Endpoint names still use `ipfs` for compatibility, but a live IPFS node is not required for the local demo.
+
+### What happens without PostgreSQL?
+
+The backend uses in-memory storage. The demo works, but data is lost when the backend restarts.
+
+### Why allow duplicate credentials on chain?
+
+For the demo, duplicates are allowed so fraud detection can be tested. Production should enforce duplicate prevention in the smart contract and backend.

@@ -1,167 +1,158 @@
-# DECAID Google OAuth Implementation - Complete Verification Report
+# DECAID Authentication And Google OAuth Status Report
 
-## Implementation Status: COMPLETE
+This file replaces the older "Google OAuth complete" report with the current authentication context in the workspace.
 
-### **1. Backend Implementation** 
+## Current Status
 
-#### Google OAuth Authentication (`backend/src/auth.js`)
-- [x] Google OAuth2Client initialization with environment variables
-- [x] `verifyGoogleToken()` function for Google token verification
-- [x] `authenticateGoogleUser()` function for user creation/retrieval
-- [x] RBAC middleware: `requireRole()`, `requireInstitutionAccess()`, `requireStudentAccess()`, `requireAdmin()`
-- [x] JWT token generation with user role and ID information
+The active frontend authentication flow is not Google OAuth. The current login page uses the separate FastAPI auth service in `auth-service/main.py`.
 
-#### Database Schema (`backend/src/database.js`)
-- [x] `users` table with Google OAuth fields (google_id, picture, role, issuer_id, student_id)
-- [x] User management functions: `getUserByEmail()`, `createUser()`, `updateUserRole()`
-- [x] Demo users with proper roles (institution, employer, student)
+Active flow:
 
-#### API Routes (`backend/src/index.js`)
-- [x] `POST /api/auth/google` - Google OAuth authentication endpoint
-- [x] `POST /api/auth/onboarding` - Role selection for new users
-- [x] `GET /api/auth/me` - Current user information
-- [x] RBAC protection on all sensitive endpoints:
-  - Institution routes: `requireInstitutionAccess()`
-  - Student routes: `requireStudentAccess()`
-  - Admin routes: `requireAdmin()`
+```text
+frontend LoginPage.jsx
+  -> AuthContext.jsx
+  -> http://127.0.0.1:8001/login
+  -> auth-service/main.py
+  -> SQLite auth.db
+  -> JWT stored in localStorage as "token"
+```
 
-### **2. Frontend Implementation**
+Current default user:
 
-#### Google Sign-In Integration (`frontend/src/Login.jsx`)
-- [x] Google OAuth script loading in HTML head
-- [x] Google Sign-In button rendering with proper configuration
-- [x] Google token handling and backend authentication
-- [x] Loading states and error handling
-- [x] Modern UI with Tailwind CSS
+```text
+username: admin
+password: admin123
+role: admin
+```
 
-#### Authentication Context (`frontend/src/auth.jsx`)
-- [x] `googleLogin()` function for Google OAuth flow
-- [x] `completeOnboarding()` function for role selection
-- [x] Onboarding state management
-- [x] JWT token storage and refresh
-- [x] User session persistence
+Users can register with one of these roles:
 
-#### Role-Based UI (`frontend/src/App.jsx`)
-- [x] Role-based tab visibility:
-  - Employer tab: All authenticated users
-  - Student tab: Students only
-  - Institution tab: Institutions only
-  - ZKP Tools tab: Students and Employers
-- [x] Auto-fill user IDs based on role
-- [x] Onboarding modal integration
+- `student`
+- `institution`
+- `employer`
+- `admin`
 
-#### Onboarding Flow (`frontend/src/Onboarding.jsx`)
-- [x] Role selection interface (Student, Institution, Employer)
-- [x] Role-specific ID input validation
-- [x] Backend onboarding completion
-- [x] Error handling and loading states
+The role determines which frontend tabs are visible.
 
-### **3. Environment Configuration**
+## Google OAuth Code Present In Backend
 
-#### Backend (`backend/.env`)
-- [x] Google OAuth client ID and secret
-- [x] JWT secret key
-- [x] Database configuration (PostgreSQL with in-memory fallback)
-- [x] API URLs for AI service and blockchain
+The backend still contains Google OAuth support:
 
-#### Frontend (`frontend/.env`)
-- [x] Google OAuth client ID for frontend
-- [x] API base URL configuration
+- `backend/src/auth.js`
+  - `OAuth2Client`
+  - `verifyGoogleToken`
+  - `authenticateGoogleUser`
+  - JWT helper functions
+  - role guard helpers
+- `backend/src/index.js`
+  - `POST /api/auth/google`
+  - `POST /api/auth/onboarding`
+  - `GET /api/auth/me`
+- `backend/src/database.js`
+  - `users` table with `google_id`, `role`, `issuer_id`, and `student_id`
+  - demo Google-style users inserted during database initialization
 
-### **4. Security & Access Control**
+The backend `.env.example` still includes:
 
-#### Authentication Flow
-1. User signs in with Google OAuth
-2. Backend verifies Google token
-3. Backend creates/updates user in database
-4. Backend issues JWT with role information
-5. Frontend stores JWT and updates user context
+```text
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+FRONTEND_URL=http://localhost:3000
+```
 
-#### Role-Based Access Control
-- **Students**: Can only access their own data and ZKP tools
-- **Institutions**: Can only issue credentials for their issuer ID
-- **Employers**: Can verify credentials and use ZKP tools
-- **Admin**: Can manage blockchain issuers (not implemented in UI)
+## Google OAuth Not Wired In Current Frontend
 
-#### API Security
-- [x] JWT authentication middleware
-- [x] Rate limiting (100 req/15min, 10 sensitive req/15min)
-- [x] Role-based endpoint protection
-- [x] Input validation with Zod schemas
+The current frontend files are:
 
-### **5. Current Server Status**
+- `frontend/src/pages/LoginPage.jsx`
+- `frontend/src/contexts/AuthContext.jsx`
+- `frontend/src/App.jsx`
+- `frontend/src/api.js`
 
-#### Backend Server
-- [x] Running on http://localhost:5000
-- [x] Health endpoint responding: `{"ok":true,"service":"backend","ts":"2026-04-14T19:22:57.814Z"}`
-- [x] Database connection: PostgreSQL (with in-memory fallback)
-- [x] All authentication endpoints available
+The current frontend does not include a Google Sign-In button, Google identity script, Google token handler, or onboarding page connected to backend `/api/auth/google`.
 
-#### Frontend Server
-- [x] Running on http://localhost:3000
-- [x] Google OAuth script loaded
-- [x] Modern React UI with Tailwind CSS
-- [x] Role-based interface rendering
+Older report references such as `frontend/src/Login.jsx`, `frontend/src/auth.jsx`, and `frontend/src/Onboarding.jsx` do not match the current file structure.
 
-### **6. Testing Verification**
+## Auth Service Implementation
 
-#### Authentication Flow Test
-- [x] Backend health check: PASS
-- [x] Frontend loading: PASS
-- [x] Google OAuth client initialization: READY
-- [x] Database schema: COMPLETE
-- [x] RBAC middleware: IMPLEMENTED
+`auth-service/main.py` provides:
 
-#### Role-Based UI Test
-- [x] Tab visibility based on user role: IMPLEMENTED
-- [x] Auto-fill user information: IMPLEMENTED
-- [x] Onboarding flow: COMPLETE
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/register` | `POST` | Create username/password user |
+| `/login` | `POST` | Verify password and return JWT |
+| `/me` | `GET` | Return current user from bearer token |
+| `/health` | `GET` | Auth service health |
 
-### **7. Original Prompt Requirements - COMPLETED**
+Implementation details:
 
-#### Requirements Met:
-1. **Google sign-in + backend-issued JWT** - IMPLEMENTED
-2. **Frontend signs in with Google** - IMPLEMENTED
-3. **Backend verifies Google identity** - IMPLEMENTED
-4. **Backend issues JWT with roles** - IMPLEMENTED
-5. **RBAC for student, institution, employer** - IMPLEMENTED
-6. **Role-based UI visibility** - IMPLEMENTED
-7. **Interface restrictions per user type** - IMPLEMENTED
-8. **Full phedge working from start to end** - IMPLEMENTED
+- SQLite database file: `auth.db`
+- Password hashing: `bcrypt`
+- JWT library: `python-jose`
+- Token expiry: 24 hours
+- Default CORS origins: `http://localhost:3000` and `http://127.0.0.1:3000`
 
-#### Additional Features Implemented:
-- User onboarding flow for role selection
-- Auto-fill of user IDs based on role
-- Comprehensive error handling
-- Modern UI with loading states
-- Environment configuration files
-- Database schema with Google OAuth support
+## Backend Authentication Implementation
 
-### **8. Usage Instructions**
+The Express backend has JWT and role helpers, but many credential demo endpoints are currently open for local testing. Examples:
 
-#### For Testing:
-1. Both servers are running (backend:5000, frontend:3000)
-2. Visit http://localhost:3000
-3. Click "Login" and use Google Sign-In
-4. Complete onboarding if first-time user
-5. Access role-specific features based on your selection
+- `authenticateToken`
+- `optionalAuth`
+- `requireRole`
+- `requireInstitutionAccess`
+- `requireStudentAccess`
+- `requireAdmin`
 
-#### For Production:
-1. Set up Google OAuth credentials in Google Cloud Console
-2. Update `.env` files with real credentials
-3. Configure PostgreSQL database
-4. Deploy with proper HTTPS
+Protected backend endpoints currently include:
 
-### **9. Conclusion**
+- `POST /api/auth/onboarding`
+- `GET /api/auth/me`
+- `POST /api/blockchain/authorize-issuer`
+- `POST /api/blockchain/deauthorize-issuer`
+- `POST /api/students/:studentId/did`
 
-The Google OAuth implementation is COMPLETE and fully functional. All requirements from the original prompt have been implemented:
+Most credential issue and verification demo endpoints are intentionally easy to call during local demos.
 
-- Google sign-in works on frontend
-- Backend verifies Google tokens and issues JWTs
-- RBAC system restricts access based on user roles
-- Role-based UI shows only appropriate interfaces
-- Complete authentication flow from sign-in to role-based access
-- Onboarding flow for new users
-- All security measures implemented
+## Recommended Wording For Project Presentation
 
-The system is ready for production deployment with proper Google OAuth credentials.
+Use this wording:
+
+> DECAID currently uses a dedicated FastAPI authentication service for local username/password login and role-based UI access. The backend also contains Google OAuth support, but the current frontend demo is wired to the local auth service. Google OAuth can be reconnected as a future production authentication path.
+
+Avoid saying:
+
+> Google OAuth is fully implemented end-to-end in the current frontend.
+
+That statement is not true for this workspace.
+
+## Steps To Reactivate Google OAuth In The Frontend
+
+1. Add a Google Identity Services button or package to the frontend.
+2. Send the returned Google ID token to `POST /api/auth/google` on the Express backend.
+3. Store the backend JWT consistently with the current auth context.
+4. Add or restore onboarding UI for users whose backend role is `pending`.
+5. Align frontend role state with backend fields:
+   - `role`
+   - `issuerId`
+   - `studentId`
+6. Confirm backend `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+7. Confirm allowed OAuth origins include `http://localhost:3000`.
+8. Add tests for login, onboarding, role tabs, and protected API calls.
+
+## Security Notes
+
+- Replace default JWT secrets before deployment.
+- Do not use local Hardhat private keys outside development.
+- Use HTTPS for browser authentication in production.
+- Persist users in PostgreSQL or another production database.
+- Protect institution, admin, and revocation endpoints before public deployment.
+- Re-enable or tune rate limiting for production.
+
+## Summary
+
+The project currently has two authentication-related implementations:
+
+1. Active frontend path: FastAPI username/password auth service on port `8001`.
+2. Backend support path: Google OAuth/JWT routes in the Express backend, not connected to the current UI.
+
+For local demos and testing, use the auth service. For a production version, either harden the auth service path or reconnect and test the backend Google OAuth path end to end.

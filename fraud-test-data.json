@@ -1,0 +1,97 @@
+{
+  "notes": [
+    "Use the paired records in order. The first record should be accepted normally.",
+    "The second record in each fraud pair reuses a unique identifier for a different student and should be flagged.",
+    "The safe pair should not trigger the unique-identifier fraud rule."
+  ],
+  "fraudPairs": [
+    {
+      "label": "Certificate Number Reuse",
+      "first": {
+        "studentId": "STU-1001",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Computer Science, Certificate Number CS-2024-5001"
+      },
+      "second": {
+        "studentId": "STU-1002",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Computer Science, Certificate Number CS-2024-5001"
+      }
+    },
+    {
+      "label": "Registration Number Reuse",
+      "first": {
+        "studentId": "STU-2001",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Master of Business Administration, Registration Number REG-MBA-8842"
+      },
+      "second": {
+        "studentId": "STU-2002",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Master of Business Administration, Registration Number REG-MBA-8842"
+      }
+    },
+    {
+      "label": "Roll Number Reuse",
+      "first": {
+        "studentId": "STU-3001",
+        "issuerId": "UNIV-2024",
+        "credentialData": "B.Tech Mechanical Engineering, Roll Number MECH-7712"
+      },
+      "second": {
+        "studentId": "STU-3002",
+        "issuerId": "UNIV-2024",
+        "credentialData": "B.Tech Mechanical Engineering, Roll Number MECH-7712"
+      }
+    },
+    {
+      "label": "Transcript Number Reuse",
+      "first": {
+        "studentId": "STU-4001",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Commerce, Transcript Number TR-2024-1199"
+      },
+      "second": {
+        "studentId": "STU-4002",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Commerce, Transcript Number TR-2024-1199"
+      }
+    },
+    {
+      "label": "Document Hash Reuse",
+      "first": {
+        "studentId": "STU-5001",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Arts, Document Hash DOC-8f3a91b7c2d4"
+      },
+      "second": {
+        "studentId": "STU-5002",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Arts, Document Hash DOC-8f3a91b7c2d4"
+      }
+    }
+  ],
+  "safePairs": [
+    {
+      "label": "Shared Descriptive Data Only",
+      "first": {
+        "studentId": "SAFE-1001",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Computer Science, CGPA 8.7, Issued On 2024-06-15"
+      },
+      "second": {
+        "studentId": "SAFE-1002",
+        "issuerId": "UNIV-2024",
+        "credentialData": "Bachelor of Computer Science, CGPA 8.7, Issued On 2024-06-15"
+      }
+    }
+  ],
+  "authTestUsers": [
+    {
+      "username": "admin",
+      "password": "admin123",
+      "role": "admin",
+      "notes": "Default auth-service user created automatically at startup."
+    }
+  ]
+}
