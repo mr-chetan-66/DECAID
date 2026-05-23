@@ -36,7 +36,13 @@ import {
   deleteStudent,
   deleteCredential,
   deleteDocumentById,
-  deleteIssuer
+  deleteIssuer,
+  createCertificateRequest,
+  getCertificateRequests,
+  getCertificateRequestById,
+  updateCertificateRequestReview,
+  saveZkpCommitment,
+  getZkpCommitment
 } from './database.js';
 
 import {
@@ -81,6 +87,51 @@ const issuerStats = new Map();
 const studentDidStore = new Map();
 const individualCredentialStore = new Map(); // Store individual credentials
 const documentsStore = new Map(); // Store document metadata
+const certificateRequestStore = new Map();
+let certificateRequestSequence = 1;
+
+const CERTIFICATE_ROUTES = {
+  normal_certificate: {
+    label: 'Normal Certificate',
+    issuerId: 'TEACHER-STUDENT-INCHARGE',
+    role: 'teacher_student_incharge'
+  },
+  courses: {
+    label: 'NPTEL / Courses',
+    issuerId: 'NPTEL-TNP-INCHARGE',
+    role: 'nptel_incharge'
+  },
+  internship: {
+    label: 'Internship',
+    issuerId: 'III-INTERNSHIP-INCHARGE',
+    role: 'iii_incharge'
+  },
+  sport: {
+    label: 'Sport',
+    issuerId: 'FORUM-SPORT-EVENT-INCHARGE',
+    role: 'forum_incharge'
+  },
+  other_event: {
+    label: 'Other Event / Hackathon',
+    issuerId: 'FORUM-SPORT-EVENT-INCHARGE',
+    role: 'forum_incharge'
+  }
+};
+
+const INCHARGE_ROLE_ISSUER = {
+  teacher_student_incharge: 'TEACHER-STUDENT-INCHARGE',
+  forum_incharge: 'FORUM-SPORT-EVENT-INCHARGE',
+  nptel_incharge: 'NPTEL-TNP-INCHARGE',
+  iii_incharge: 'III-INTERNSHIP-INCHARGE',
+  institution: null
+};
+
+function canReviewForIssuer(user, issuerId) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'institution') return true;
+  return INCHARGE_ROLE_ISSUER[user.role] === issuerId;
+}
 
 // Feature flag: use PostgreSQL if available
 const useDatabase = process.env.DB_HOST !== undefined;
@@ -1087,7 +1138,8 @@ app.get('/api/students/:studentId/profile', async (req, res) => {
         try {
           // Get issuer trust and stats (same as verification endpoint)
           const issuerStats = await getOrInitIssuerStats(c.issuerId);
-          const issuerTrustScore = issuerStats ? issuerStats.trustRank || 3 : 3;
+          const issuerTrust = await computeIssuerTrustRank(c.issuerId);
+          const issuerTrustScore = issuerTrust.rank || 3;
           const credentialCount = issuerStats ? issuerStats.totalIssuedAttempts || 1 : 1;
           
           // Get student credential count
@@ -1110,6 +1162,9 @@ app.get('/api/students/:studentId/profile', async (req, res) => {
               studentCredentialCount,
               timeGap: 86400.0,
               duplicateFlag: 0,
+              chainExists: chain?.exists ? 1 : 0,
+              revokedFlag: chain?.revoked ? 1 : 0,
+              issuedAt: chain?.issuedAt ? new Date(Number(chain.issuedAt) * 1000).toISOString() : undefined,
               batchSize: 1
             })
           });
@@ -1122,7 +1177,9 @@ app.get('/api/students/:studentId/profile', async (req, res) => {
               riskLevel: body.riskLevel,
               reasons: body.reasons,
               aiScore: body.aiScore,
-              ruleScore: body.ruleScore
+              ruleScore: body.ruleScore,
+              llmReview: body.llmReview || null,
+              llmError: body.llmError || null
             };
             // Cache the result
             riskScoreCache.set(cacheKey, risk);
@@ -1221,20 +1278,22 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
   let risk = { ok: false, error: 'Insufficient data for risk assessment' };
   let effectiveStudentId = studentId;
   let effectiveIssuerId = issuerId;
+  let storedStudentId = null;
+  let storedIssuerId = null;
   let contentDuplicateDetected = false;
   
   // If studentId or issuerId missing, try to find from batch data
   if ((!studentId || !issuerId) && useDatabase) {
     const dbResults = await findResultsByHash(h);
     if (dbResults.length > 0) {
+      storedStudentId = dbResults[0].student_id;
+      storedIssuerId = dbResults[0].issuer_id;
       effectiveStudentId = effectiveStudentId || dbResults[0].student_id;
       effectiveIssuerId = effectiveIssuerId || dbResults[0].issuer_id;
     }
   }
   
   // Fallback to in-memory if database doesn't have the data
-  let storedStudentId = null;
-  let storedIssuerId = null;
   if (!useDatabase) {
     for (const record of batchStore.values()) {
       const found = (record.results || []).find((r) => String(r.credentialHash || '').toLowerCase() === h);
@@ -1270,8 +1329,20 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
     });
   }
 
+  if (issuerId && storedIssuerId && issuerId !== storedIssuerId) {
+    return res.status(403).json({
+      ok: false,
+      error: `Issuer ID mismatch: The credential was issued by '${storedIssuerId}', not '${issuerId}'. Please verify the correct Issuer ID.`,
+      code: "ISSUER_ID_MISMATCH",
+      providedIssuerId: issuerId,
+      expectedIssuerId: storedIssuerId,
+      credentialHash: h
+    });
+  }
+
   // Calculate risk using AI service with behavioral features
-  if (effectiveStudentId && effectiveIssuerId) {
+  const riskAssessmentAvailable = Boolean(studentId && effectiveStudentId && effectiveIssuerId);
+  if (riskAssessmentAvailable) {
     // Check cache first
     const cacheKey = `${effectiveStudentId}:${effectiveIssuerId}:${h}`;
     if (riskScoreCache.has(cacheKey)) {
@@ -1280,7 +1351,8 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
       try {
         // Get issuer trust and stats
         const issuerStats = await getOrInitIssuerStats(effectiveIssuerId);
-        const issuerTrustScore = issuerStats ? issuerStats.trustRank || 3 : 3;
+        const issuerTrust = await computeIssuerTrustRank(effectiveIssuerId);
+        const issuerTrustScore = issuerTrust.rank || 3;
         const credentialCount = issuerStats ? issuerStats.totalIssuedAttempts || 1 : 1;
         
         // Get student credential count
@@ -1327,7 +1399,11 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
             timeGap,
             duplicateFlag,
             contentDuplicateFlag,
-            batchSize
+            batchSize,
+            chainExists: chain.exists ? 1 : 0,
+            revokedFlag: chain.revoked ? 1 : 0,
+            hasDocument: ipfsCid ? 1 : 0,
+            issuedAt: chain.issuedAt ? new Date(chain.issuedAt * 1000).toISOString() : undefined
           })
         });
         const body = await r.json();
@@ -1339,7 +1415,9 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
             riskLevel: body.riskLevel,
             reasons: body.reasons,
             aiScore: body.aiScore,
-            ruleScore: body.ruleScore
+            ruleScore: body.ruleScore,
+            llmReview: body.llmReview || null,
+            llmError: body.llmError || null
           };
           // Cache the result
           riskScoreCache.set(cacheKey, risk);
@@ -1390,7 +1468,15 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
     trustSignals: trust.signals,
     duplicateDetected,
     contentDuplicateDetected,
-    zkp
+    zkp,
+    verificationContext: {
+      mode: riskAssessmentAvailable ? 'contextual' : 'hash_only',
+      riskAssessmentAvailable,
+      studentIdProvided: Boolean(studentId),
+      issuerIdProvided: Boolean(issuerId),
+      matchedStoredStudent: Boolean(storedStudentId && (!studentId || studentId === storedStudentId)),
+      matchedStoredIssuer: Boolean(storedIssuerId && (!issuerId || issuerId === storedIssuerId))
+    }
   });
 });
 
@@ -1402,6 +1488,73 @@ const IssueRequest = z.object({
   batchId: z.string().optional(),
   generateZkp: z.boolean().optional()
 });
+
+async function issueCredentialRecord({ studentId, issuerId, credentialData, issuedAt, certificateNumber, ipfsCid }) {
+  const credentialHashHex = sha256Hex(`${studentId}:${issuerId}:${credentialData}`);
+  const contentSignature = buildContentSignature(credentialData, certificateNumber);
+  const credentialHashBytes32 = ethers.hexlify(ethers.getBytes('0x' + credentialHashHex));
+  const issuedAtValue = issuedAt || new Date().toISOString();
+
+  const istats = await getOrInitIssuerStats(issuerId);
+  if (istats) {
+    await saveIssuerStats(issuerId, {
+      totalIssuedAttempts: istats.totalIssuedAttempts + 1
+    });
+  }
+
+  const registry = getRegistry();
+  const tx = await registry.issue(credentialHashBytes32);
+  const receipt = await tx.wait();
+  const txHash = receipt?.hash || tx.hash;
+
+  if (istats) {
+    await saveIssuerStats(issuerId, {
+      totalIssuedOnChain: istats.totalIssuedOnChain + 1
+    });
+  }
+
+  individualCredentialStore.set(credentialHashHex, {
+    studentId,
+    issuerId,
+    credentialData,
+    certificateNumber: certificateNumber || null,
+    contentSignature,
+    credentialHash: credentialHashHex,
+    issuedAt: issuedAtValue,
+    txHash,
+    createdAt: new Date().toISOString()
+  });
+
+  if (useDatabase) {
+    const individualBatchId = `individual-${studentId}-${Date.now()}`;
+    await createBatch({
+      batchId: individualBatchId,
+      issuerId,
+      startedAt: issuedAtValue,
+      totalCount: 1
+    });
+    await addBatchResult({
+      batchId: individualBatchId,
+      studentId,
+      issuerId,
+      certificateNumber: certificateNumber || null,
+      contentSignature,
+      credentialHash: credentialHashHex,
+      txHash,
+      chainError: null,
+      ipfsCid: ipfsCid || null,
+      ipfsError: null
+    });
+    await completeBatch({
+      batchId: individualBatchId,
+      completedAt: issuedAtValue,
+      successCount: 1,
+      failedCount: 0
+    });
+  }
+
+  return { credentialHash: credentialHashHex, txHash, contentSignature };
+}
 
 app.post('/api/credentials/issue', async (req, res) => {
   const parsed = IssueRequest.safeParse(req.body);
@@ -1498,10 +1651,11 @@ app.post('/api/credentials/issue', async (req, res) => {
         ipfsCid: null,
         ipfsError: null
       });
-      await completeBatch(individualBatchId, {
+      await completeBatch({
+        batchId: individualBatchId,
         completedAt: issuedAt,
         successCount: 1,
-        failureCount: 0
+        failedCount: 0
       });
     }
 
@@ -1526,6 +1680,245 @@ app.post('/api/credentials/issue', async (req, res) => {
       });
     }
     return res.status(500).json({ ok: false, error: msg });
+  }
+});
+
+const CertificateRequestBody = z.object({
+  studentId: z.string().min(1),
+  certificateType: z.enum(['normal_certificate', 'courses', 'internship', 'sport', 'other_event']),
+  title: z.string().min(1),
+  description: z.string().min(1)
+});
+
+function normalizeRequest(row, { includeFileData = false } = {}) {
+  if (!row) return null;
+  const fileData = row.file_data || row.fileData || null;
+  return {
+    id: row.id,
+    studentId: row.student_id || row.studentId,
+    certificateType: row.certificate_type || row.certificateType,
+    title: row.title,
+    description: row.description,
+    assignedIssuerId: row.assigned_issuer_id || row.assignedIssuerId,
+    status: row.status,
+    credentialHash: row.credential_hash || row.credentialHash || null,
+    txHash: row.tx_hash || row.txHash || null,
+    rejectionReason: row.rejection_reason || row.rejectionReason || null,
+    filename: row.filename || null,
+    contentType: row.content_type || row.contentType || null,
+    fileSize: row.file_size || row.fileSize || null,
+    hasDocument: Boolean(fileData && row.filename),
+    ...(includeFileData ? { fileData } : {}),
+    createdAt: row.created_at || row.createdAt,
+    reviewedAt: row.reviewed_at || row.reviewedAt || null
+  };
+}
+
+app.get('/api/certificate-routes', (req, res) => {
+  return res.json({
+    ok: true,
+    routes: Object.entries(CERTIFICATE_ROUTES).map(([value, route]) => ({
+      value,
+      ...route
+    }))
+  });
+});
+
+app.post('/api/certificate-requests', authenticateToken, upload.single('file'), async (req, res) => {
+  const parsed = CertificateRequestBody.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  if (req.user.role !== 'student' && req.user.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Only students can create certificate requests' });
+  }
+  if (req.user.role === 'student' && parsed.data.studentId !== req.user.username) {
+    return res.status(403).json({ ok: false, error: 'Students can only create requests for their own ID' });
+  }
+
+  const route = CERTIFICATE_ROUTES[parsed.data.certificateType];
+  if (!route) {
+    return res.status(400).json({ ok: false, error: 'Unsupported certificate type' });
+  }
+
+  const fileData = req.file ? req.file.buffer.toString('base64') : null;
+  const request = {
+    ...parsed.data,
+    assignedIssuerId: route.issuerId,
+    status: 'pending',
+    fileData,
+    filename: req.file?.originalname || null,
+    contentType: req.file?.mimetype || null,
+    fileSize: req.file?.size || null,
+    createdAt: new Date().toISOString()
+  };
+
+  let saved;
+  if (useDatabase) {
+    saved = await createCertificateRequest(request);
+    if (!saved) {
+      return res.status(500).json({ ok: false, error: 'Failed to create certificate request' });
+    }
+  } else {
+    saved = { id: certificateRequestSequence++, ...request };
+    certificateRequestStore.set(saved.id, saved);
+  }
+
+  await getOrCreateStudentDid(parsed.data.studentId);
+  return res.json({ ok: true, request: normalizeRequest(saved), route });
+});
+
+app.get('/api/certificate-requests', authenticateToken, async (req, res) => {
+  const studentId = String(req.query.studentId || '').trim();
+  const issuerId = String(req.query.issuerId || '').trim();
+
+  if (req.user.role === 'student' && studentId !== req.user.username) {
+    return res.status(403).json({ ok: false, error: 'Students can only view their own requests' });
+  }
+  if (issuerId && !canReviewForIssuer(req.user, issuerId)) {
+    return res.status(403).json({ ok: false, error: 'Access denied for this incharge queue' });
+  }
+  if (!studentId && !issuerId && req.user.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Admin access required for all requests' });
+  }
+
+  let requests;
+  if (useDatabase) {
+    requests = await getCertificateRequests({
+      studentId: studentId || undefined,
+      issuerId: issuerId || undefined
+    });
+  } else {
+    requests = Array.from(certificateRequestStore.values()).filter((request) => {
+      return (!studentId || request.studentId === studentId) &&
+        (!issuerId || request.assignedIssuerId === issuerId);
+    });
+  }
+
+  return res.json({ ok: true, requests: requests.map(normalizeRequest) });
+});
+
+app.get('/api/certificate-requests/:id/document', authenticateToken, async (req, res) => {
+  const id = Number(req.params.id);
+  const request = useDatabase
+    ? await getCertificateRequestById(id)
+    : certificateRequestStore.get(id);
+
+  const normalized = normalizeRequest(request, { includeFileData: true });
+  if (!normalized) {
+    return res.status(404).json({ ok: false, error: 'Request not found' });
+  }
+
+  const canViewAsStudent = req.user.role === 'student' && normalized.studentId === req.user.username;
+  const canViewAsReviewer = canReviewForIssuer(req.user, normalized.assignedIssuerId);
+  if (!canViewAsStudent && !canViewAsReviewer) {
+    return res.status(403).json({ ok: false, error: 'Access denied for this request document' });
+  }
+
+  if (!normalized.fileData || !normalized.filename) {
+    return res.status(404).json({ ok: false, error: 'No document uploaded for this request' });
+  }
+
+  const fileBuffer = Buffer.from(normalized.fileData, 'base64');
+  const safeFilename = String(normalized.filename).replace(/["\r\n]/g, '_');
+  res.setHeader('Content-Type', normalized.contentType || 'application/octet-stream');
+  res.setHeader('Content-Length', fileBuffer.length);
+  res.setHeader('Content-Disposition', `inline; filename="${safeFilename}"`);
+  return res.send(fileBuffer);
+});
+
+const CertificateReviewRequest = z.object({
+  decision: z.enum(['approved', 'rejected']),
+  rejectionReason: z.string().optional()
+});
+
+app.post('/api/certificate-requests/:id/review', authenticateToken, async (req, res) => {
+  const parsed = CertificateReviewRequest.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  const id = Number(req.params.id);
+  const request = useDatabase
+    ? await getCertificateRequestById(id)
+    : certificateRequestStore.get(id);
+
+  const normalized = normalizeRequest(request, { includeFileData: true });
+  if (!normalized) {
+    return res.status(404).json({ ok: false, error: 'Request not found' });
+  }
+  if (normalized.status !== 'pending') {
+    return res.status(409).json({ ok: false, error: 'Request has already been reviewed' });
+  }
+  if (!canReviewForIssuer(req.user, normalized.assignedIssuerId)) {
+    return res.status(403).json({ ok: false, error: 'Access denied for this incharge queue' });
+  }
+
+  if (parsed.data.decision === 'rejected') {
+    const updates = {
+      status: 'rejected',
+      rejectionReason: parsed.data.rejectionReason || 'Not accepted'
+    };
+    const updated = useDatabase
+      ? await updateCertificateRequestReview(id, updates)
+      : { ...request, ...updates, reviewedAt: new Date().toISOString() };
+    if (!useDatabase) certificateRequestStore.set(id, updated);
+    return res.json({ ok: true, request: normalizeRequest(updated) });
+  }
+
+  try {
+    const credentialData = [
+      normalized.certificateType,
+      normalized.title,
+      normalized.description,
+      normalized.filename || ''
+    ].join('|');
+    const issued = await issueCredentialRecord({
+      studentId: normalized.studentId,
+      issuerId: normalized.assignedIssuerId,
+      credentialData
+    });
+
+    if (normalized.fileData && normalized.filename) {
+      if (useDatabase) {
+        await saveDocument({
+          credentialHash: issued.credentialHash,
+          ipfsCid: null,
+          fileData: normalized.fileData,
+          filename: normalized.filename,
+          contentType: normalized.contentType || 'application/octet-stream',
+          fileSize: normalized.fileSize || 0,
+          studentId: normalized.studentId,
+          issuerId: normalized.assignedIssuerId
+        });
+      } else {
+        documentsStore.set(issued.credentialHash, {
+          credentialHash: issued.credentialHash,
+          ipfsCid: null,
+          fileData: normalized.fileData,
+          filename: normalized.filename,
+          contentType: normalized.contentType || 'application/octet-stream',
+          fileSize: normalized.fileSize || 0,
+          studentId: normalized.studentId,
+          issuerId: normalized.assignedIssuerId,
+          uploadedAt: new Date()
+        });
+      }
+    }
+
+    const updates = {
+      status: 'approved',
+      credentialHash: issued.credentialHash,
+      txHash: issued.txHash
+    };
+    const updated = useDatabase
+      ? await updateCertificateRequestReview(id, updates)
+      : { ...request, ...updates, reviewedAt: new Date().toISOString() };
+    if (!useDatabase) certificateRequestStore.set(id, updated);
+    return res.json({ ok: true, request: normalizeRequest(updated) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
@@ -1677,16 +2070,22 @@ app.post('/api/zkp/verify-by-commitment', async (req, res) => {
     }
   }
 
-  // If not found in memory, check database
   if (!foundCredential && useDatabase) {
-    // This would require a database query by commitment
-    // For now, return not found
-    console.log(`[Verify by Commitment] Commitment not found in store`);
-    return res.status(404).json({
+    const storedCommitment = await getZkpCommitment(commitment);
+    if (storedCommitment) {
+      foundCredential = {
+        hash: storedCommitment.credential_hash,
+        studentId: storedCommitment.student_id,
+        zkpCommitment: storedCommitment.commitment,
+        zkpNonce: storedCommitment.nonce
+      };
+    }
+  } else if (chain?.exists) {
+    risk = {
       ok: false,
-      error: "Commitment not found",
-      valid: false
-    });
+      reason: 'hash_only_verification',
+      error: 'Risk analysis requires Student ID context. Hash-only verification reports blockchain status only.'
+    };
   }
 
   if (!foundCredential) {
@@ -1748,11 +2147,20 @@ app.post('/api/zkp/store-commitment', async (req, res) => {
   const { credentialHash, studentId, commitment, nonce } = parsed.data;
   console.log(`[Store Commitment] credentialHash: ${credentialHash.substring(0, 8)}..., studentId: ${studentId}, commitment: ${commitment.substring(0, 8)}...`);
 
-  // Check if credential exists
-  const credential = individualCredentialStore.get(credentialHash);
+  let credential = individualCredentialStore.get(credentialHash);
+  if (!credential && useDatabase) {
+    const matches = await findResultsByHash(credentialHash);
+    const match = matches.find((row) => row.student_id === studentId);
+    if (match) {
+      credential = {
+        studentId: match.student_id,
+        credentialHash: match.credential_hash
+      };
+    }
+  }
+
   if (!credential) {
-    console.log(`[Store Commitment] Credential not found in individualCredentialStore`);
-    console.log(`[Store Commitment] Current store size: ${individualCredentialStore.size}`);
+    console.log(`[Store Commitment] Credential not found`);
     return res.status(404).json({
       ok: false,
       error: "Credential not found"
@@ -1770,8 +2178,13 @@ app.post('/api/zkp/store-commitment', async (req, res) => {
   }
 
   // Store the commitment
-  credential.zkpCommitment = commitment;
-  credential.zkpNonce = nonce;
+  if (individualCredentialStore.has(credentialHash)) {
+    credential.zkpCommitment = commitment;
+    credential.zkpNonce = nonce;
+  }
+  if (useDatabase) {
+    await saveZkpCommitment({ credentialHash, studentId, commitment, nonce });
+  }
   console.log(`[Store Commitment] Stored successfully`);
 
   return res.json({

@@ -1,6 +1,11 @@
 from datetime import datetime
 from typing import Optional
+import json
+import os
 import re
+from pathlib import Path
+from urllib import request as urlrequest
+from urllib.error import HTTPError, URLError
 
 import numpy as np
 from fastapi import FastAPI
@@ -10,13 +15,31 @@ from sklearn.ensemble import IsolationForest
 app = FastAPI(title="DECAID AI Fraud Risk Service")
 
 
+def _load_env_file() -> None:
+    env_path = Path(__file__).with_name(".env")
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file()
+
+
 class ScoreRequest(BaseModel):
     studentId: str = Field(min_length=1, max_length=255)
     issuerId: str = Field(min_length=1, max_length=255)
     credentialHash: str = Field(min_length=64, max_length=64, pattern=r'^[0-9a-fA-F]{64}$')
     contentSignature: Optional[str] = Field(default=None, min_length=64, max_length=64, pattern=r'^[0-9a-fA-F]{64}$')
     issuedAt: Optional[datetime] = None
-    batchId: Optional[str] = Field(max_length=255)
+    batchId: Optional[str] = Field(default=None, max_length=255)
     # New behavioral features
     issuerTrustScore: Optional[int] = Field(default=3, ge=1, le=5)  # 1-5 rating
     credentialCount: Optional[int] = Field(default=1, ge=0)  # credentials by issuer
@@ -25,6 +48,9 @@ class ScoreRequest(BaseModel):
     duplicateFlag: Optional[int] = Field(default=0, ge=0, le=1)  # 1 if duplicate, else 0
     contentDuplicateFlag: Optional[int] = Field(default=0, ge=0, le=1)  # 1 if same credential content is reused for another student
     batchSize: Optional[int] = Field(default=1, ge=1)  # number in batch
+    chainExists: Optional[int] = Field(default=1, ge=0, le=1)
+    revokedFlag: Optional[int] = Field(default=0, ge=0, le=1)
+    hasDocument: Optional[int] = Field(default=0, ge=0, le=1)
 
 
 def _clamp_int(v: float, lo: int = 0, hi: int = 100) -> int:
@@ -122,9 +148,155 @@ def _features(req: ScoreRequest) -> np.ndarray:
     )
 
 
+def _extract_json_object(text: str) -> Optional[dict]:
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+    try:
+        parsed = json.loads(cleaned)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.S)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+
+def _gemini_review(req: ScoreRequest, base_score: int, base_reasons: list[str]) -> tuple[Optional[dict], Optional[str]]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None, None
+
+    preferred_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+    models = []
+    for candidate in [preferred_model, "gemini-2.0-flash", "gemini-2.0-flash-lite"]:
+        if candidate not in models:
+            models.append(candidate)
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": (
+                            "You are an academic credential fraud analyst. "
+                            "Return only strict JSON with keys: riskAdjustment, confidence, reasons, summary. "
+                            "riskAdjustment must be an integer from 0 to 25 and represents only extra fraud risk beyond the base score. "
+                            "For clean credentials with no red flags, riskAdjustment must be 0. confidence is LOW, MEDIUM, or HIGH. "
+                            "Do not invent facts. Use only these signals.\n\n"
+                            f"Base risk score: {base_score}\n"
+                            f"Base reasons: {base_reasons}\n"
+                            f"Student ID: {req.studentId}\n"
+                            f"Issuer ID: {req.issuerId}\n"
+                            f"Credential hash valid SHA-256: {bool(re.match(r'^[0-9a-fA-F]{64}$', req.credentialHash))}\n"
+                            f"Blockchain exists: {req.chainExists == 1}\n"
+                            f"Revoked: {req.revokedFlag == 1}\n"
+                            f"Duplicate hash: {req.duplicateFlag == 1}\n"
+                            f"Duplicate content for another student: {req.contentDuplicateFlag == 1}\n"
+                            f"Issuer trust rank: {req.issuerTrustScore}/5\n"
+                            f"Issuer credential count: {req.credentialCount}\n"
+                            f"Student credential count: {req.studentCredentialCount}\n"
+                            f"Batch size: {req.batchSize}\n"
+                            f"Uploaded certificate document linked: {req.hasDocument == 1}\n"
+                        )
+                    }
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1024,
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "riskAdjustment": {"type": "INTEGER"},
+                    "confidence": {"type": "STRING"},
+                    "reasons": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"},
+                    },
+                    "summary": {"type": "STRING"},
+                },
+                "required": ["riskAdjustment", "confidence", "reasons", "summary"],
+            },
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
+    }
+
+    last_error = None
+    for model in models:
+      try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        body = json.dumps(payload).encode("utf-8")
+        req_obj = urlrequest.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlrequest.urlopen(req_obj, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        candidate = data.get("candidates", [{}])[0]
+        text = candidate.get("content", {}).get("parts", [{}])[0].get("text", "")
+        if not text:
+            finish_reason = candidate.get("finishReason") or data.get("promptFeedback") or "empty response"
+            last_error = f"Gemini returned no text: {finish_reason}"
+            continue
+        parsed = _extract_json_object(text)
+        if not parsed:
+            last_error = f"Gemini returned non-JSON content: {text[:160]}"
+            continue
+        adjustment = _clamp_int(float(parsed.get("riskAdjustment", 0)), -10, 25)
+        no_red_flags = (
+            req.chainExists == 1
+            and req.revokedFlag == 0
+            and req.duplicateFlag == 0
+            and req.contentDuplicateFlag == 0
+            and (req.issuerTrustScore or 3) > 2
+            and (req.timeGap or 86400.0) >= 3600
+            and (req.batchSize or 1) <= 20
+            and len(req.studentId) > 4
+        )
+        if no_red_flags:
+            adjustment = 0
+        confidence = str(parsed.get("confidence", "MEDIUM")).upper()
+        if confidence not in {"LOW", "MEDIUM", "HIGH"}:
+            confidence = "MEDIUM"
+        reasons = parsed.get("reasons", [])
+        if not isinstance(reasons, list):
+            reasons = []
+        return {
+            "riskAdjustment": adjustment,
+            "confidence": confidence,
+            "reasons": [str(reason) for reason in reasons[:4] if str(reason).strip()],
+            "summary": str(parsed.get("summary", "")).strip()[:240],
+            "model": model,
+        }, None
+      except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:240]
+        last_error = f"Gemini HTTP {exc.code}: {detail}"
+        if exc.code not in {429, 503}:
+            break
+      except (URLError, TimeoutError, OSError, KeyError, json.JSONDecodeError, ValueError) as exc:
+        last_error = f"Gemini unavailable: {type(exc).__name__}"
+        break
+    return None, last_error
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "ai", "ts": datetime.utcnow().isoformat()}
+    return {
+        "ok": True,
+        "service": "ai",
+        "geminiEnabled": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+        "ts": datetime.utcnow().isoformat(),
+    }
 
 
 @app.post("/score")
@@ -173,14 +345,19 @@ def score(req: ScoreRequest):
         if req.contentDuplicateFlag == 1:
             rule_score += 35
             reasons.append("A unique credential identifier was reused for a different student")
+
+        if req.chainExists == 0:
+            rule_score += 45
+            reasons.append("Credential hash was not found on blockchain")
+
+        if req.revokedFlag == 1:
+            rule_score += 50
+            reasons.append("Credential is revoked on blockchain")
         
         # Low issuer trust → increased risk
         if req.issuerTrustScore and req.issuerTrustScore <= 2:
             rule_score += 20
             reasons.append("Low trust issuer")
-        elif req.issuerTrustScore and req.issuerTrustScore == 3:
-            rule_score += 10
-            reasons.append("Medium trust issuer")
         
         # Very high credential count → suspicious
         if req.credentialCount and req.credentialCount > 100:
@@ -210,6 +387,9 @@ def score(req: ScoreRequest):
         # If AI detects anomaly, add explanation
         if ai_score > 30:
             reasons.append("Anomalous behavior detected")
+
+        if not reasons:
+            ai_score = min(ai_score, 10)
         
         # Combine AI + rule-based scores (0-100)
         final_score = _clamp_int(ai_score + rule_score, 0, 100)
@@ -226,14 +406,38 @@ def score(req: ScoreRequest):
         if not reasons and final_score > 30:
             reasons.append("Elevated risk based on behavioral patterns")
         
+        if not reasons:
+            reasons = [
+                "Credential hash format is valid",
+                "No duplicate or rapid-issuance warning was detected",
+                "Issuer and student context was accepted",
+            ]
+            if req.hasDocument == 1:
+                reasons.append("Uploaded certificate document is linked to the credential record")
+
+        llm_review, llm_error = _gemini_review(req, final_score, reasons)
+        if llm_review:
+            final_score = _clamp_int(final_score + llm_review["riskAdjustment"], 0, 100)
+            if final_score <= 20:
+                risk_level = "LOW"
+            elif final_score <= 50:
+                risk_level = "MEDIUM"
+            else:
+                risk_level = "HIGH"
+            for reason in llm_review["reasons"]:
+                if reason not in reasons:
+                    reasons.append(reason)
+
         return {
             "ok": True,
             "riskScore": final_score,
             "riskLevel": risk_level,
             "aiScore": ai_score,
             "ruleScore": rule_score,
-            "reasons": reasons if reasons else ["Normal behavior"],
+            "reasons": reasons,
             "model": "hybrid_isolation_forest",
+            "llmReview": llm_review,
+            "llmError": llm_error,
         }
     except Exception as e:
         return {"ok": False, "error": f"Processing error: {str(e)}"}

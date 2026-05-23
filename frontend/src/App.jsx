@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { generateZkpProof, getApiBaseUrl, getStudentProfile, setApiBaseUrl, verifyByHash, verifyZkpProof, verifyZkpByCommitment, storeZkpCommitment, revokeCredential } from './api.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { generateZkpProof, getApiBaseUrl, setApiBaseUrl, verifyByHash, verifyZkpProof, verifyZkpByCommitment, storeZkpCommitment, revokeCredential } from './api.js';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
 
@@ -17,9 +17,9 @@ function Badge({ label, tone }) {
 
 function Card({ title, children }) {
   return (
-    <div className="rounded-2xl bg-slate-900/60 ring-1 ring-white/10 shadow-xl">
-      <div className="px-5 py-4 border-b border-white/10">
-        <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
+    <div className="rounded-lg bg-[#0b1220]/85 ring-1 ring-cyan-100/10 shadow-[0_18px_55px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+      <div className="px-5 py-4 border-b border-cyan-100/10">
+        <h2 className="text-sm font-semibold text-cyan-50">{title}</h2>
       </div>
       <div className="px-5 py-4">{children}</div>
     </div>
@@ -32,381 +32,192 @@ function formatUnix(ts) {
   return isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
 }
 
-// Admin Dashboard Component
-function AdminDashboard({ 
-  apiBaseUrl, 
-  adminLoading, setAdminLoading, 
-  adminError, setAdminError,
-  adminStats, setAdminStats,
-  adminStudents, setAdminStudents,
-  adminIssuers, setAdminIssuers,
-  adminCredentials, setAdminCredentials,
-  adminDocuments, setAdminDocuments,
-  adminActiveTab, setAdminActiveTab
-}) {
-  
-  async function loadDashboardData() {
+const CERTIFICATE_TYPES = [
+  { value: 'normal_certificate', label: 'Normal Certificate', issuerId: 'TEACHER-STUDENT-INCHARGE' },
+  { value: 'courses', label: 'NPTEL / Courses', issuerId: 'NPTEL-TNP-INCHARGE' },
+  { value: 'internship', label: 'Internship', issuerId: 'III-INTERNSHIP-INCHARGE' },
+  { value: 'sport', label: 'Sport', issuerId: 'FORUM-SPORT-EVENT-INCHARGE' },
+  { value: 'other_event', label: 'Other Event / Hackathon', issuerId: 'FORUM-SPORT-EVENT-INCHARGE' }
+];
+
+const INCHARGE_ROLE_ISSUER = {
+  teacher_student_incharge: 'TEACHER-STUDENT-INCHARGE',
+  forum_incharge: 'FORUM-SPORT-EVENT-INCHARGE',
+  nptel_incharge: 'NPTEL-TNP-INCHARGE',
+  iii_incharge: 'III-INTERNSHIP-INCHARGE'
+};
+
+const INCHARGE_ROLE_LABEL = {
+  teacher_student_incharge: 'Teacher Student Incharge',
+  forum_incharge: 'Forum Incharge',
+  nptel_incharge: 'NPTEL / TNP Incharge',
+  iii_incharge: 'III Internship Incharge'
+};
+
+const isInchargeRole = (role) => Object.prototype.hasOwnProperty.call(INCHARGE_ROLE_ISSUER, role);
+
+function maskHash(hash) {
+  if (!hash) return '****';
+  return `${hash.slice(0, 6)}****${hash.slice(-6)}`;
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes || 0);
+  if (!size) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAuthHeaders(extra = {}) {
+  const token = localStorage.getItem('token');
+  return token
+    ? { ...extra, Authorization: `Bearer ${token}` }
+    : extra;
+}
+
+function buildRequestCredentialData(request) {
+  return [
+    request.certificateType,
+    request.title,
+    request.description,
+    request.filename || ''
+  ].join('|');
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Admin Operations Component
+function AdminDashboard({ apiBaseUrl, adminLoading, setAdminLoading, adminError, setAdminError, adminStats, setAdminStats }) {
+  const [requests, setRequests] = useState([]);
+
+  async function loadOperationsData() {
     setAdminLoading(true);
     setAdminError('');
     try {
-      // Load all data in parallel
-      const [statsRes, studentsRes, issuersRes, credentialsRes, documentsRes] = await Promise.all([
+      const [statsRes, requestsRes] = await Promise.all([
         fetch(`${apiBaseUrl}/api/admin/stats`),
-        fetch(`${apiBaseUrl}/api/admin/students`),
-        fetch(`${apiBaseUrl}/api/admin/issuers`),
-        fetch(`${apiBaseUrl}/api/admin/credentials`),
-        fetch(`${apiBaseUrl}/api/documents`)
+        fetch(`${apiBaseUrl}/api/certificate-requests`, {
+          headers: getAuthHeaders()
+        })
       ]);
 
       const stats = await statsRes.json();
-      const students = await studentsRes.json();
-      const issuers = await issuersRes.json();
-      const credentials = await credentialsRes.json();
-      const documents = await documentsRes.json();
-
+      const requestData = await requestsRes.json();
       if (stats.ok) setAdminStats(stats.stats);
-      if (students.ok) setAdminStudents(students.students);
-      if (issuers.ok) setAdminIssuers(issuers.issuers);
-      if (credentials.ok) setAdminCredentials(credentials.credentials);
-      if (documents.ok) setAdminDocuments(documents.documents);
+      if (requestData.ok) setRequests(requestData.requests || []);
     } catch (err) {
-      setAdminError(err.message || 'Failed to load dashboard data');
+      setAdminError(err.message || 'Failed to load admin data');
     } finally {
       setAdminLoading(false);
     }
   }
 
   useEffect(() => {
-    loadDashboardData();
+    loadOperationsData();
   }, []);
 
-  const TabButton = ({ id, label, count }) => (
-    <button
-      onClick={() => setAdminActiveTab(id)}
-      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-        adminActiveTab === id 
-          ? 'bg-indigo-500 text-white' 
-          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-      }`}
-    >
-      {label}
-      {count !== undefined && (
-        <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
-          adminActiveTab === id ? 'bg-white/20' : 'bg-slate-600'
-        }`}>
-          {count}
-        </span>
-      )}
-    </button>
+  const pending = requests.filter((request) => request.status === 'pending');
+  const approved = requests.filter((request) => request.status === 'approved');
+  const rejected = requests.filter((request) => request.status === 'rejected');
+  const routes = Object.entries(
+    requests.reduce((acc, request) => {
+      acc[request.assignedIssuerId] = (acc[request.assignedIssuerId] || 0) + 1;
+      return acc;
+    }, {})
   );
 
   return (
-    <Card title="Admin Dashboard - PostgreSQL Data Viewer">
-      <div className="flex flex-col gap-4">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+    <Card title="Admin Operations">
+      <div className="space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div className="text-sm text-slate-300">
-            View all data stored in PostgreSQL database
+            Monitor certificate request flow and blockchain issuance health.
           </div>
           <button
-            onClick={loadDashboardData}
+            type="button"
+            onClick={loadOperationsData}
             disabled={adminLoading}
-            className="px-4 py-2 bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white rounded-lg text-sm font-medium"
+            className="rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
           >
-            {adminLoading ? 'Loading...' : '🔄 Refresh'}
+            {adminLoading ? 'Loading...' : 'Refresh'}
           </button>
         </div>
 
-        {adminError && (
-          <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-200 text-sm">
-            ❌ {adminError}
+        {adminError ? (
+          <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 p-3 text-sm">
+            {adminError}
           </div>
-        )}
+        ) : null}
 
-        {/* Stats Overview */}
-        {adminStats && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="p-3 rounded-xl bg-slate-800/50 border border-white/5 text-center">
-              <div className="text-2xl font-bold text-indigo-400">{adminStats.totalStudents}</div>
-              <div className="text-xs text-slate-400">Students</div>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-800/50 border border-white/5 text-center">
-              <div className="text-2xl font-bold text-emerald-400">{adminStats.totalIssuers}</div>
-              <div className="text-xs text-slate-400">Issuers</div>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-800/50 border border-white/5 text-center">
-              <div className="text-2xl font-bold text-amber-400">{adminStats.totalCredentials}</div>
-              <div className="text-xs text-slate-400">Credentials</div>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-800/50 border border-white/5 text-center">
-              <div className="text-2xl font-bold text-cyan-400">{adminStats.totalDocuments}</div>
-              <div className="text-xs text-slate-400">Documents</div>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-800/50 border border-white/5 text-center">
-              <div className="text-2xl font-bold text-purple-400">{adminStats.totalBatches}</div>
-              <div className="text-xs text-slate-400">Batches</div>
-            </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10 text-center">
+            <div className="text-2xl font-bold text-amber-300">{pending.length}</div>
+            <div className="text-xs text-slate-400">Pending</div>
           </div>
-        )}
-
-        {/* Tab Navigation */}
-        <div className="flex flex-wrap gap-2">
-          <TabButton id="overview" label="Overview" />
-          <TabButton id="students" label="Students" count={adminStudents.length} />
-          <TabButton id="issuers" label="Issuers" count={adminIssuers.length} />
-          <TabButton id="credentials" label="Credentials" count={adminCredentials.length} />
-          <TabButton id="documents" label="Documents" count={adminDocuments.length} />
+          <div className="p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10 text-center">
+            <div className="text-2xl font-bold text-emerald-300">{approved.length}</div>
+            <div className="text-xs text-slate-400">Approved</div>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10 text-center">
+            <div className="text-2xl font-bold text-rose-300">{rejected.length}</div>
+            <div className="text-xs text-slate-400">Not Accepted</div>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10 text-center">
+            <div className="text-2xl font-bold text-slate-100">{adminStats?.totalCredentials || 0}</div>
+            <div className="text-xs text-slate-400">On Record</div>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10 text-center">
+            <div className="text-2xl font-bold text-slate-100">{requests.length}</div>
+            <div className="text-xs text-slate-400">Requests</div>
+          </div>
         </div>
 
-        {/* Tab Content */}
-        <div className="mt-2">
-          {adminActiveTab === 'overview' && (
-            <div className="text-sm text-slate-400 p-4 rounded-xl bg-slate-800/30">
-              <p className="mb-2">📊 Select a tab above to view detailed data:</p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li><strong>Students:</strong> All student IDs with their DIDs and credential counts</li>
-                <li><strong>Issuers:</strong> All institutions with their issuance statistics</li>
-                <li><strong>Credentials:</strong> All issued credentials with hashes and blockchain status</li>
-                <li><strong>Documents:</strong> All uploaded files stored in the database</li>
-              </ul>
+        <div>
+          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Incharge Routing</h4>
+          {routes.length === 0 ? (
+            <div className="text-sm text-slate-500">No routed requests yet.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {routes.map(([issuerId, count]) => (
+                <div key={issuerId} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                  <span className="text-sm text-slate-200 font-mono">{issuerId}</span>
+                  <Badge label={`${count} request${count === 1 ? '' : 's'}`} tone="slate" />
+                </div>
+              ))}
             </div>
           )}
+        </div>
 
-          {adminActiveTab === 'students' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left border-b border-white/10">
-                    <th className="pb-2 text-slate-300">Student ID</th>
-                    <th className="pb-2 text-slate-300">DID</th>
-                    <th className="pb-2 text-slate-300">Credentials</th>
-                    <th className="pb-2 text-slate-300">Documents</th>
-                    <th className="pb-2 text-slate-300">Created</th>
-                    <th className="pb-2 text-slate-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminStudents.map((s) => (
-                    <tr key={s.student_id} className="border-b border-white/5">
-                      <td className="py-2 font-mono text-slate-200">{s.student_id}</td>
-                      <td className="py-2 font-mono text-xs text-slate-400">{s.did}</td>
-                      <td className="py-2 text-center">
-                        <span className="px-2 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs">
-                          {s.credential_count || 0}
-                        </span>
-                      </td>
-                      <td className="py-2 text-center">
-                        <span className="px-2 py-1 rounded-full bg-cyan-500/20 text-cyan-300 text-xs">
-                          {s.document_count || 0}
-                        </span>
-                      </td>
-                      <td className="py-2 text-slate-400 text-xs">{new Date(s.created_at).toLocaleDateString()}</td>
-                      <td className="py-2">
-                        <button
-                          onClick={async () => {
-                            if (confirm(`Delete student ${s.student_id} and all their data?`)) {
-                              try {
-                                const res = await fetch(`${apiBaseUrl}/api/admin/students/${encodeURIComponent(s.student_id)}`, { method: 'DELETE' });
-                                if (res.ok) {
-                                  loadDashboardData();
-                                } else {
-                                  alert('Failed to delete student');
-                                }
-                              } catch (err) {
-                                alert('Error deleting student');
-                              }
-                            }
-                          }}
-                          className="px-2 py-1 bg-rose-500 hover:bg-rose-400 text-white rounded text-xs"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {adminActiveTab === 'issuers' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left border-b border-white/10">
-                    <th className="pb-2 text-slate-300">Issuer ID</th>
-                    <th className="pb-2 text-slate-300">Issued</th>
-                    <th className="pb-2 text-slate-300">On Chain</th>
-                    <th className="pb-2 text-slate-300">Success Rate</th>
-                    <th className="pb-2 text-slate-300">Revocations</th>
-                    <th className="pb-2 text-slate-300">Avg Risk</th>
-                    <th className="pb-2 text-slate-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminIssuers.map((i) => (
-                    <tr key={i.issuer_id} className="border-b border-white/5">
-                      <td className="py-2 font-mono text-slate-200">{i.issuer_id}</td>
-                      <td className="py-2 text-slate-300">{i.total_issued_attempts || 0}</td>
-                      <td className="py-2 text-emerald-400">{i.total_issued_on_chain || 0}</td>
-                      <td className="py-2">
-                        <span className={`px-2 py-1 rounded-full text-xs ${
-                          (i.chain_success_rate || 0) >= 0.9 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
-                        }`}>
-                          {((i.chain_success_rate || 0) * 100).toFixed(0)}%
-                        </span>
-                      </td>
-                      <td className="py-2 text-rose-400">{i.total_revocations || 0}</td>
-                      <td className="py-2">
-                        <span className={`px-2 py-1 rounded-full text-xs ${
-                          (i.avg_risk || 0) <= 30 ? 'bg-emerald-500/20 text-emerald-300' : 
-                          (i.avg_risk || 0) <= 60 ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                        }`}>
-                          {(i.avg_risk || 0).toFixed(0)}
-                        </span>
-                      </td>
-                      <td className="py-2">
-                        <button
-                          onClick={async () => {
-                            if (confirm(`Delete issuer ${i.issuer_id} stats?`)) {
-                              try {
-                                const res = await fetch(`${apiBaseUrl}/api/admin/issuers/${encodeURIComponent(i.issuer_id)}`, { method: 'DELETE' });
-                                if (res.ok) {
-                                  loadDashboardData();
-                                } else {
-                                  alert('Failed to delete issuer');
-                                }
-                              } catch (err) {
-                                alert('Error deleting issuer');
-                              }
-                            }
-                          }}
-                          className="px-2 py-1 bg-rose-500 hover:bg-rose-400 text-white rounded text-xs"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {adminActiveTab === 'credentials' && (
-            <div className="overflow-x-auto max-h-96">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-slate-900">
-                  <tr className="text-left border-b border-white/10">
-                    <th className="pb-2 text-slate-300">Credential Hash</th>
-                    <th className="pb-2 text-slate-300">Student</th>
-                    <th className="pb-2 text-slate-300">Issuer</th>
-                    <th className="pb-2 text-slate-300">On Chain</th>
-                    <th className="pb-2 text-slate-300">Risk Score</th>
-                    <th className="pb-2 text-slate-300">Date</th>
-                    <th className="pb-2 text-slate-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminCredentials.map((c) => (
-                    <tr key={c.credential_hash} className="border-b border-white/5">
-                      <td className="py-2 font-mono text-xs text-slate-400">{c.credential_hash?.slice(0, 16)}...</td>
-                      <td className="py-2 font-mono text-xs text-slate-300">{c.student_id}</td>
-                      <td className="py-2 font-mono text-xs text-slate-300">{c.issuer_id}</td>
-                      <td className="py-2">
-                        <span className={`px-2 py-1 rounded-full text-xs ${
-                          c.on_chain ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
-                        }`}>
-                          {c.on_chain ? '✓' : '✗'}
-                        </span>
-                      </td>
-                      <td className="py-2">
-                        <span className={`px-2 py-1 rounded-full text-xs ${
-                          (c.risk_score || 0) <= 30 ? 'bg-emerald-500/20 text-emerald-300' : 
-                          (c.risk_score || 0) <= 60 ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                        }`}>
-                          {c.risk_score || '-'}
-                        </span>
-                      </td>
-                      <td className="py-2 text-xs text-slate-400">{new Date(c.created_at).toLocaleDateString()}</td>
-                      <td className="py-2">
-                        <button
-                          onClick={async () => {
-                            if (confirm(`Delete credential ${c.credential_hash?.slice(0, 16)}...?`)) {
-                              try {
-                                const res = await fetch(`${apiBaseUrl}/api/admin/credentials/${encodeURIComponent(c.credential_hash)}`, { method: 'DELETE' });
-                                if (res.ok) {
-                                  loadDashboardData();
-                                } else {
-                                  alert('Failed to delete credential');
-                                }
-                              } catch (err) {
-                                alert('Error deleting credential');
-                              }
-                            }
-                          }}
-                          className="px-2 py-1 bg-rose-500 hover:bg-rose-400 text-white rounded text-xs"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {adminActiveTab === 'documents' && (
-            <div className="overflow-x-auto max-h-96">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-slate-900">
-                  <tr className="text-left border-b border-white/10">
-                    <th className="pb-2 text-slate-300">File Name</th>
-                    <th className="pb-2 text-slate-300">Credential Hash</th>
-                    <th className="pb-2 text-slate-300">Student</th>
-                    <th className="pb-2 text-slate-300">Size</th>
-                    <th className="pb-2 text-slate-300">Type</th>
-                    <th className="pb-2 text-slate-300">Uploaded</th>
-                    <th className="pb-2 text-slate-300">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminDocuments.map((d) => (
-                    <tr key={d.credential_hash || d.id} className="border-b border-white/5">
-                      <td className="py-2 text-slate-200">{d.filename}</td>
-                      <td className="py-2 font-mono text-xs text-slate-400">{d.credential_hash?.slice(0, 16)}...</td>
-                      <td className="py-2 font-mono text-xs text-slate-300">{d.student_id}</td>
-                      <td className="py-2 text-slate-400">{(d.file_size / 1024).toFixed(1)} KB</td>
-                      <td className="py-2 text-xs text-slate-400">{d.content_type}</td>
-                      <td className="py-2 text-xs text-slate-400">{new Date(d.uploaded_at || d.created_at).toLocaleDateString()}</td>
-                      <td className="py-2">
-                        <button
-                          onClick={async () => {
-                            if (confirm(`Delete document ${d.filename}?`)) {
-                              try {
-                                const res = await fetch(`${apiBaseUrl}/api/admin/documents/${d.id}`, { method: 'DELETE' });
-                                if (res.ok) {
-                                  loadDashboardData();
-                                } else {
-                                  alert('Failed to delete document');
-                                }
-                              } catch (err) {
-                                alert('Error deleting document');
-                              }
-                            }
-                          }}
-                          className="px-2 py-1 bg-rose-500 hover:bg-rose-400 text-white rounded text-xs"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div>
+          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Recent Requests</h4>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {requests.length === 0 ? (
+              <div className="text-sm text-slate-500">No certificate requests yet.</div>
+            ) : requests.slice(0, 20).map((request) => (
+              <div key={request.id} className="p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm text-slate-200">{request.title}</div>
+                    <div className="text-xs text-slate-500">{request.studentId} - {request.assignedIssuerId}</div>
+                  </div>
+                  <Badge
+                    label={request.status === 'approved' ? 'Approved' : request.status === 'rejected' ? 'Not Accepted' : 'Pending'}
+                    tone={request.status === 'approved' ? 'green' : request.status === 'rejected' ? 'red' : 'amber'}
+                  />
+                </div>
+                {request.credentialHash ? (
+                  <div className="mt-2 font-mono text-xs text-emerald-300 break-all">{maskHash(request.credentialHash)}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </Card>
@@ -417,7 +228,7 @@ function AppContent({ user, onLogout }) {
   const [apiBaseUrl, setApiBaseUrlState] = useState(getApiBaseUrl());
   const [tab, setTab] = useState(() => {
     if (user.role === 'student') return 'student';
-    if (user.role === 'institution') return 'institution';
+    if (user.role === 'institution' || isInchargeRole(user.role)) return 'institution';
     if (user.role === 'employer') return 'employer';
     return 'employer'; // default for admin
   });
@@ -429,14 +240,20 @@ function AppContent({ user, onLogout }) {
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
 
-  const [studentLookupId, setStudentLookupId] = useState('');
-  const [studentLoading, setStudentLoading] = useState(false);
-  const [studentError, setStudentError] = useState('');
-  const [studentProfile, setStudentProfile] = useState(null);
-  const [studentDocuments, setStudentDocuments] = useState([]);
-  const [studentVerificationHistory, setStudentVerificationHistory] = useState([]);
+  const [studentLookupId, setStudentLookupId] = useState(user.role === 'student' ? user.username : '');
+  const [studentRequests, setStudentRequests] = useState([]);
+  const [studentRequestLoading, setStudentRequestLoading] = useState(false);
+  const [studentRequestError, setStudentRequestError] = useState('');
+  const [studentRequestForm, setStudentRequestForm] = useState({
+    certificateType: 'normal_certificate',
+    title: '',
+    description: '',
+    file: null
+  });
+  const studentFileInputRef = useRef(null);
 
   // ZKP state
+  const [zkpPlainText, setZkpPlainText] = useState('');
   const [zkpHash, setZkpHash] = useState('');
   const [zkpStudentId, setZkpStudentId] = useState('');
   const [zkpNonce, setZkpNonce] = useState('');
@@ -462,17 +279,10 @@ function AppContent({ user, onLogout }) {
   const [institutionLoading, setInstitutionLoading] = useState(false);
   const [institutionError, setInstitutionError] = useState('');
   const [institutionIssuerId, setInstitutionIssuerId] = useState('');
-  const [institutionBatchName, setInstitutionBatchName] = useState('');
-  const [institutionCredentials, setInstitutionCredentials] = useState('');
-  const [institutionDocument, setInstitutionDocument] = useState(null);
-  const [institutionIssueStudentId, setInstitutionIssueStudentId] = useState('');
-  const [institutionIssueData, setInstitutionIssueData] = useState('');
-  const [institutionGenerateZkp, setInstitutionGenerateZkp] = useState(false);
-  const [institutionStats, setInstitutionStats] = useState(null);
-  const [institutionBatches, setInstitutionBatches] = useState([]);
-  const [institutionStudents, setInstitutionStudents] = useState([]);
-  const [institutionCredentialsList, setInstitutionCredentialsList] = useState([]);
-  const [institutionActivity, setInstitutionActivity] = useState([]);
+  const [inchargeRequests, setInchargeRequests] = useState([]);
+  const [reviewNotes, setReviewNotes] = useState({});
+  const [requestHashPreviews, setRequestHashPreviews] = useState({});
+  const [copiedHashKey, setCopiedHashKey] = useState('');
 
   // Admin Dashboard state
   const [adminLoading, setAdminLoading] = useState(false);
@@ -510,38 +320,63 @@ function AppContent({ user, onLogout }) {
     }
   }
 
-  async function onLoadStudent(e) {
+  async function loadStudentRequests(id = studentLookupId.trim()) {
+    if (!id) return;
+    const response = await fetch(`${getApiBaseUrl()}/api/certificate-requests?studentId=${encodeURIComponent(id)}`, {
+      headers: getAuthHeaders()
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Failed to load certificate requests');
+    setStudentRequests(result.requests || []);
+  }
+
+  async function onSubmitStudentRequest(e) {
     e.preventDefault();
-    setStudentError('');
-    setStudentProfile(null);
-    setStudentDocuments([]);
-    setStudentVerificationHistory([]);
-    if (!studentLookupId.trim()) {
-      setStudentError('Enter a student ID.');
+    setStudentRequestError('');
+    const currentStudentId = user.role === 'student' ? user.username : studentLookupId.trim();
+    if (!currentStudentId) {
+      setStudentRequestError('Enter your student ID before submitting a request.');
+      return;
+    }
+    if (!studentRequestForm.title.trim() || !studentRequestForm.description.trim()) {
+      setStudentRequestError('Add a title and description for the certificate.');
       return;
     }
 
-    setStudentLoading(true);
+    setStudentRequestLoading(true);
     try {
-      const profile = await getStudentProfile(studentLookupId.trim());
-      setStudentProfile(profile);
-      
-      // Fetch documents for this student
-      const docsRes = await fetch(`${getApiBaseUrl()}/api/documents/student/${encodeURIComponent(studentLookupId.trim())}`);
-      if (docsRes.ok) {
-        const docsData = await docsRes.json();
-        setStudentDocuments(docsData.documents || []);
+      const formData = new FormData();
+      formData.append('studentId', currentStudentId);
+      formData.append('certificateType', studentRequestForm.certificateType);
+      formData.append('title', studentRequestForm.title.trim());
+      formData.append('description', studentRequestForm.description.trim());
+      if (studentRequestForm.file) {
+        formData.append('file', studentRequestForm.file);
       }
-      
-      // Fetch verification history (simulated for now - would need backend endpoint)
-      setStudentVerificationHistory([
-        { date: new Date().toISOString(), verifier: 'Employer A', result: 'Valid' },
-        { date: new Date(Date.now() - 86400000).toISOString(), verifier: 'Employer B', result: 'Valid' }
-      ]);
+
+      const response = await fetch(`${getApiBaseUrl()}/api/certificate-requests`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: formData
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Request failed');
+
+      setStudentLookupId(currentStudentId);
+      setStudentRequestForm({
+        certificateType: 'normal_certificate',
+        title: '',
+        description: '',
+        file: null
+      });
+      if (studentFileInputRef.current) {
+        studentFileInputRef.current.value = '';
+      }
+      await loadStudentRequests(currentStudentId);
     } catch (err) {
-      setStudentError(err?.message || 'Student lookup failed');
+      setStudentRequestError(err?.message || 'Request failed');
     } finally {
-      setStudentLoading(false);
+      setStudentRequestLoading(false);
     }
   }
 
@@ -582,6 +417,17 @@ function AppContent({ user, onLogout }) {
     } finally {
       setZkpLoading(false);
     }
+  }
+
+  async function onGenerateHashFromText() {
+    setZkpError('');
+    if (!zkpPlainText.trim()) {
+      setZkpError('Enter certificate data to hash.');
+      return;
+    }
+
+    const hashHex = await sha256Hex(zkpPlainText.trim());
+    setZkpHash(hashHex);
   }
 
   async function onVerifyZkp(e) {
@@ -676,62 +522,134 @@ function AppContent({ user, onLogout }) {
   async function loadInstitutionData(issuerId) {
     if (!issuerId) return;
     try {
-      // Load batches for this issuer
-      const batchesRes = await fetch(`${getApiBaseUrl()}/api/admin/batches`);
-      if (batchesRes.ok) {
-        const batchesData = await batchesRes.json();
-        setInstitutionBatches((batchesData.batches || []).filter(b => b.issuer_id === issuerId));
+      const requestsRes = await fetch(`${getApiBaseUrl()}/api/certificate-requests?issuerId=${encodeURIComponent(issuerId)}`, {
+        headers: getAuthHeaders()
+      });
+      if (requestsRes.ok) {
+        const requestsData = await requestsRes.json();
+        setInchargeRequests(requestsData.requests || []);
       }
-
-      // Load students for this issuer (from credentials)
-      const credsRes = await fetch(`${getApiBaseUrl()}/api/admin/credentials`);
-      if (credsRes.ok) {
-        const credsData = await credsRes.json();
-        console.log('[Load Institution Data] Credentials response:', credsData);
-        const issuerStudents = {};
-        const issuerCredentials = [];
-        (credsData.credentials || []).forEach(c => {
-          console.log('[Load Institution Data] Processing credential:', c);
-          if (c.issuer_id === issuerId && c.student_id) {
-            issuerStudents[c.student_id] = (issuerStudents[c.student_id] || 0) + 1;
-            issuerCredentials.push(c);
-          }
-        });
-        console.log('[Load Institution Data] Filtered credentials:', issuerCredentials);
-        setInstitutionStudents(Object.entries(issuerStudents).map(([studentId, count]) => ({ studentId, count })));
-        setInstitutionCredentialsList(issuerCredentials);
-      } else {
-        console.error('[Load Institution Data] Failed to fetch credentials:', credsRes.status);
-      }
-
-      // Simulate activity log
-      setInstitutionActivity([
-        { date: new Date().toISOString(), action: 'Credential issued', details: `Student: TEST-STUDENT-001` },
-        { date: new Date(Date.now() - 3600000).toISOString(), action: 'Credential issued', details: `Student: TEST-STUDENT-002` }
-      ]);
     } catch (err) {
       console.error('Failed to load institution data:', err);
     }
   }
 
+  async function onReviewCertificateRequest(requestId, decision) {
+    setInstitutionLoading(true);
+    setInstitutionError('');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/certificate-requests/${requestId}/review`, {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          decision,
+          rejectionReason: reviewNotes[requestId] || 'Not accepted'
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Review failed');
+      await loadInstitutionData(institutionIssuerId);
+    } catch (err) {
+      setInstitutionError(err?.message || 'Review failed');
+    } finally {
+      setInstitutionLoading(false);
+    }
+  }
+
+  async function onGenerateRequestHashPreview(request) {
+    const credentialData = buildRequestCredentialData(request);
+    const hash = await sha256Hex(`${request.studentId}:${request.assignedIssuerId}:${credentialData}`);
+    setRequestHashPreviews((previews) => ({
+      ...previews,
+      [request.id]: hash
+    }));
+  }
+
+  async function onOpenRequestDocument(request) {
+    setInstitutionError('');
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/api/certificate-requests/${request.id}/document`, {
+        headers: getAuthHeaders()
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || 'Could not open uploaded document');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      setInstitutionError(err?.message || 'Could not open uploaded document');
+    }
+  }
+
+  useEffect(() => {
+    const roleIssuerId = INCHARGE_ROLE_ISSUER[user.role];
+    if (roleIssuerId && !institutionIssuerId) {
+      setInstitutionIssuerId(roleIssuerId);
+      loadInstitutionData(roleIssuerId);
+    }
+  }, [user.role]);
+
+  useEffect(() => {
+    if (user.role === 'student' && user.username) {
+      setStudentLookupId(user.username);
+      loadStudentRequests(user.username).catch((err) => {
+        setStudentRequestError(err?.message || 'Failed to load certificate requests');
+      });
+    }
+  }, [user.role, user.username]);
+
   const riskScore = data?.risk?.ok ? data.risk.riskScore : null;
   const riskTone = riskScore == null ? 'slate' : riskScore >= 70 ? 'red' : riskScore >= 40 ? 'amber' : 'green';
+  const approvedRequests = studentRequests.filter((request) => request.status === 'approved');
+  const pendingRequests = studentRequests.filter((request) => request.status === 'pending');
+  const rejectedRequests = studentRequests.filter((request) => request.status === 'rejected');
+  const currentInchargeRequests = inchargeRequests.filter((request) => request.status === 'pending');
+  const reviewedInchargeRequests = inchargeRequests.filter((request) => request.status !== 'pending');
+  const riskAssessmentAvailable = Boolean(data?.verificationContext?.riskAssessmentAvailable && data?.risk?.ok);
+  const tabButtonClass = (active) =>
+    `rounded-lg px-3 py-2 text-sm font-semibold ring-1 transition-colors ${
+      active
+        ? 'bg-cyan-100 text-slate-950 ring-cyan-200/70 shadow-lg shadow-cyan-950/20'
+        : 'bg-[#0b1220]/75 text-slate-300 ring-cyan-100/10 hover:bg-[#101a2b] hover:text-cyan-50'
+    }`;
+
+  async function copyHashToClipboard(hashValue, key) {
+    if (!hashValue) return;
+    await navigator.clipboard.writeText(hashValue);
+    setCopiedHashKey(key);
+    setTimeout(() => {
+      setCopiedHashKey((current) => (current === key ? '' : current));
+    }, 1800);
+  }
 
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className="app-shell min-h-screen text-slate-100">
       {/* Header */}
-      <div className="bg-slate-900/90 backdrop-blur-sm border-b border-white/10">
+      <div className="bg-[#07101d]/88 backdrop-blur-xl border-b border-cyan-100/10 shadow-[0_1px_0_rgba(255,255,255,0.04)]">
         <div className="max-w-6xl mx-auto px-4 py-3">
           <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-xl font-bold text-white">DECAID</h1>
-              <span className="text-xs text-slate-400">Decentralized Academic Identity</span>
-              <span className="text-xs text-slate-500">|</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <h1 className="text-xl font-bold tracking-wide text-cyan-50">DECAID</h1>
+              <span className="text-xs text-cyan-100/65">Decentralized Academic Identity</span>
+              <span className="hidden sm:inline text-xs text-slate-600">|</span>
               <span className="text-xs text-slate-400">Logged in as: {user?.username} ({user?.role})</span>
             </div>
             <button
               onClick={onLogout}
-              className="rounded-xl px-4 py-2 text-sm font-semibold ring-1 ring-white/10 bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
+              className="rounded-lg px-4 py-2 text-sm font-semibold ring-1 ring-cyan-100/10 bg-[#0d1728] text-slate-200 hover:bg-[#14223a] transition-colors"
             >
               Logout
             </button>
@@ -748,9 +666,7 @@ function AppContent({ user, onLogout }) {
             <button
               type="button"
               onClick={() => setTab('employer')}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-                tab === 'employer' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-              }`}
+              className={tabButtonClass(tab === 'employer')}
             >
               Employer Verify
             </button>
@@ -760,33 +676,27 @@ function AppContent({ user, onLogout }) {
             <button
               type="button"
               onClick={() => setTab('student')}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-                tab === 'student' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-              }`}
+              className={tabButtonClass(tab === 'student')}
             >
               Student Identity
             </button>
           )}
           
-          {(user.role === 'institution' || user.role === 'admin') && (
+          {(user.role === 'institution' || isInchargeRole(user.role) || user.role === 'admin') && (
             <button
               type="button"
               onClick={() => setTab('institution')}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-                tab === 'institution' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-              }`}
+              className={tabButtonClass(tab === 'institution')}
             >
-              Institution Portal
+              Incharge Portal
             </button>
           )}
           
-          {user.role === 'admin' && (
+          {user.role !== 'student' && user.role !== 'employer' && (
             <button
               type="button"
               onClick={() => setTab('zkp')}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-                tab === 'zkp' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-              }`}
+              className={tabButtonClass(tab === 'zkp')}
             >
               ZKP Tools
             </button>
@@ -796,17 +706,17 @@ function AppContent({ user, onLogout }) {
             <button
               type="button"
               onClick={() => setTab('admin')}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-white/10 ${
-                tab === 'admin' ? 'bg-slate-200 text-slate-900' : 'bg-slate-900/60 text-slate-200'
-              }`}
+              className={tabButtonClass(tab === 'admin')}
             >
-              Admin Dashboard
+              Admin Operations
             </button>
           )}
         </div>
 
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className={`mt-6 grid ${tab === 'student' ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-3'} gap-5`}>
+          {tab !== 'student' && (
           <div className="lg:col-span-1 flex flex-col gap-5">
+            {user.role === 'admin' && (
             <Card title="API Connection">
               <label className="block text-xs text-slate-300 mb-2">Backend Base URL</label>
               <div className="flex gap-2">
@@ -826,6 +736,7 @@ function AppContent({ user, onLogout }) {
               </div>
               <div className="mt-2 text-xs text-slate-400">Using: {getApiBaseUrl()}</div>
             </Card>
+            )}
 
             {tab === 'employer' ? (
               <Card title="Verify Credential">
@@ -884,34 +795,27 @@ function AppContent({ user, onLogout }) {
                   )}
                 </form>
               </Card>
-            ) : tab === 'student' ? (
-              <Card title="Student Identity Lookup">
-                <form onSubmit={onLoadStudent} className="flex flex-col gap-3">
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1">Student ID</label>
-                    <input
-                      value={studentLookupId}
-                      onChange={(e) => setStudentLookupId(e.target.value)}
-                      className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                      placeholder="e.g. S12345"
-                    />
-                  </div>
-
-                  <button
-                    disabled={studentLoading}
-                    className="rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
-                  >
-                    {studentLoading ? 'Loading...' : 'Load Profile'}
-                  </button>
-
-                  {studentError ? <div className="text-sm text-rose-200">{studentError}</div> : null}
-                </form>
-              </Card>
-            ) : (
+            ) : tab === 'zkp' ? (
               <Card title="ZKP Tools">
                 <div className="flex flex-col gap-4">
                   <div className="text-sm text-slate-300">
-                    Generate a zero-knowledge proof to verify credential ownership without revealing the actual credential data.
+                    Generate a credential hash, turn it into a zero-knowledge proof, or verify a proof shared by another participant.
+                  </div>
+                  <div className="rounded-xl bg-slate-950/40 ring-1 ring-white/10 p-3">
+                    <label className="block text-xs text-slate-300 mb-1">Certificate Data to Hash</label>
+                    <textarea
+                      value={zkpPlainText}
+                      onChange={(e) => setZkpPlainText(e.target.value)}
+                      className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100 h-20"
+                      placeholder="Paste certificate title, student ID, issuer, or canonical credential text"
+                    />
+                    <button
+                      type="button"
+                      onClick={onGenerateHashFromText}
+                      className="mt-2 w-full rounded-xl bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 text-sm font-semibold"
+                    >
+                      Generate Hash
+                    </button>
                   </div>
                   <form onSubmit={onGenerateZkp} className="flex flex-col gap-3">
                     <div>
@@ -988,7 +892,7 @@ function AppContent({ user, onLogout }) {
                       </div>
                       <button
                         disabled={zkpCommitmentOnlyLoading}
-                        className="rounded-xl bg-purple-500 hover:bg-purple-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
+                        className="rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
                       >
                         {zkpCommitmentOnlyLoading ? 'Verifying...' : 'Verify by Commitment'}
                       </button>
@@ -1019,10 +923,39 @@ function AppContent({ user, onLogout }) {
                   </div>
                 </div>
               </Card>
+            ) : (
+              <Card title="Incharge Tools">
+                <div className="space-y-3">
+                  <div className="text-sm text-slate-300">
+                    Review student certificate requests assigned to your role.
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">Issuer ID</label>
+                    <input
+                      value={institutionIssuerId}
+                      onChange={(e) => setInstitutionIssuerId(e.target.value)}
+                      className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
+                      disabled={isInchargeRole(user.role)}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => loadInstitutionData(institutionIssuerId)}
+                    disabled={institutionLoading || !institutionIssuerId}
+                    className="w-full rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
+                  >
+                    {institutionLoading ? 'Loading...' : 'Refresh Queue'}
+                  </button>
+                  <div className="text-xs text-slate-500">
+                    Current: {currentInchargeRequests.length} | History: {reviewedInchargeRequests.length}
+                  </div>
+                </div>
+              </Card>
             )}
           </div>
+          )}
 
-          <div className="lg:col-span-2 flex flex-col gap-5">
+          <div className={`${tab === 'student' ? '' : 'lg:col-span-2'} flex flex-col gap-5`}>
             {tab === 'employer' ? (
               <Card title="Verification Result">
                 {!data ? (
@@ -1067,9 +1000,9 @@ function AppContent({ user, onLogout }) {
                     {/* Risk Score Visual */}
                     <div className="bg-slate-950/30 rounded-xl p-4 border border-white/5">
                       <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm text-slate-300">Fraud Risk Score</span>
+                        <span className="text-sm text-slate-300">Verification Analysis</span>
                         <div className="flex items-center gap-3">
-                          {data?.risk?.riskLevel && (
+                          {riskAssessmentAvailable && data?.risk?.riskLevel && (
                             <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
                               data.risk.riskLevel === 'HIGH' ? 'bg-rose-500/20 text-rose-300' :
                               data.risk.riskLevel === 'MEDIUM' ? 'bg-amber-500/20 text-amber-300' :
@@ -1078,41 +1011,53 @@ function AppContent({ user, onLogout }) {
                               {data.risk.riskLevel}
                             </span>
                           )}
-                          <span className={`text-2xl font-bold ${riskScore >= 70 ? 'text-rose-400' : riskScore >= 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                            {riskScore ?? '--'}/100
-                          </span>
+                          {riskAssessmentAvailable ? (
+                            <span className={`text-2xl font-bold ${riskScore >= 70 ? 'text-rose-400' : riskScore >= 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                              {riskScore ?? '--'}/100
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300">Hash-only</span>
+                          )}
                         </div>
                       </div>
-                      <div className="h-3 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${riskScore >= 70 ? 'bg-rose-500' : riskScore >= 40 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                          style={{ width: `${riskScore ?? 0}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between mt-2 text-xs text-slate-500">
-                        <span>Safe (0)</span>
-                        <span>Moderate (50)</span>
-                        <span>High Risk (100)</span>
-                      </div>
-                      {data?.risk?.model && (
+                      {riskAssessmentAvailable ? (
+                        <>
+                          <div className="h-3 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${riskScore >= 70 ? 'bg-rose-500' : riskScore >= 40 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                              style={{ width: `${riskScore ?? 0}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between mt-2 text-xs text-slate-500">
+                            <span>Safe (0)</span>
+                            <span>Moderate (50)</span>
+                            <span>High Risk (100)</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="rounded-lg bg-cyan-400/5 p-3 text-sm text-slate-300 ring-1 ring-cyan-300/15">
+                          Hash-only verification confirms blockchain existence and status. Add the Student ID, and optionally Issuer ID, to run the fraud-risk analysis.
+                        </div>
+                      )}
+                      {riskAssessmentAvailable && data?.risk?.model && (
                         <div className="mt-2 text-xs text-slate-500">
                           Model: <span className="text-slate-400">{data.risk.model}</span>
                         </div>
                       )}
-                      {data?.risk?.reasons && data.risk.reasons.length > 0 && (
+                      {riskAssessmentAvailable && data?.risk?.reasons && data.risk.reasons.length > 0 && (
                         <div className="mt-3">
-                          <div className="text-xs text-slate-400 mb-2">Risk Factors:</div>
+                          <div className="text-xs text-slate-400 mb-2">Analysis Notes:</div>
                           <div className="space-y-1">
                             {data.risk.reasons.map((reason, idx) => (
                               <div key={idx} className="text-xs text-slate-300 flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-300"></span>
                                 {reason}
                               </div>
                             ))}
                           </div>
                         </div>
                       )}
-                      {data?.risk?.aiScore !== undefined && data?.risk?.ruleScore !== undefined && (
+                      {riskAssessmentAvailable && data?.risk?.aiScore !== undefined && data?.risk?.ruleScore !== undefined && (
                         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                           <div className="p-2 rounded-lg bg-slate-900/50">
                             <div className="text-slate-500">AI Score</div>
@@ -1124,6 +1069,20 @@ function AppContent({ user, onLogout }) {
                           </div>
                         </div>
                       )}
+                      {riskAssessmentAvailable && data?.risk?.llmReview ? (
+                        <div className="mt-3 rounded-lg bg-cyan-400/5 p-3 text-xs text-slate-300 ring-1 ring-cyan-300/15">
+                          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-semibold text-cyan-100">Gemini Review</span>
+                            <span className="text-slate-500">{data.risk.llmReview.model} | {data.risk.llmReview.confidence}</span>
+                          </div>
+                          <div>{data.risk.llmReview.summary}</div>
+                        </div>
+                      ) : null}
+                      {riskAssessmentAvailable && data?.risk?.llmError ? (
+                        <div className="mt-3 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-100 ring-1 ring-amber-400/20">
+                          Gemini review unavailable; local analysis was used.
+                        </div>
+                      ) : null}
                     </div>
 
                     {/* Details Grid */}
@@ -1154,9 +1113,9 @@ function AppContent({ user, onLogout }) {
                             <span className="text-slate-300 font-mono text-xs truncate max-w-[200px]">{data.blockchain?.issuerAddress || '—'}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-slate-500">ZKP Status</span>
-                            <span className={`${data?.zkp?.status === 'verified' ? 'text-emerald-400' : data?.zkp?.status === 'invalid' ? 'text-rose-400' : 'text-slate-400'}`}>
-                              {data?.zkp?.status === 'verified' ? '✓ Verified' : data?.zkp?.status === 'invalid' ? '✗ Invalid' : '○ Not Provided'}
+                            <span className="text-slate-500">Verification Mode</span>
+                            <span className={data?.verificationContext?.riskAssessmentAvailable ? 'text-emerald-400' : 'text-slate-400'}>
+                              {data?.verificationContext?.riskAssessmentAvailable ? 'Context verified' : 'Hash-only'}
                             </span>
                           </div>
                         </div>
@@ -1220,573 +1179,278 @@ function AppContent({ user, onLogout }) {
                 )}
               </Card>
             ) : tab === 'student' ? (
-              <Card title="Student Profile">
-                {!studentProfile ? (
-                  <div className="text-sm text-slate-400">Load a student profile to view DID and aggregated credentials.</div>
-                ) : (
-                  <div className="space-y-6">
-                    {/* Profile Header */}
-                    <div className="flex flex-wrap items-center gap-2 mb-4">
-                      <Badge label={`DID: ${studentProfile.did}`} tone="slate" />
-                      <Badge
-                        label={
-                          studentProfile.studentRiskScore == null
-                            ? 'Student Risk: -'
-                            : `Student Risk: ${studentProfile.studentRiskScore}/100`
-                        }
-                        tone={
-                          studentProfile.studentRiskScore == null
-                            ? 'slate'
-                            : studentProfile.studentRiskScore >= 70
-                              ? 'red'
-                              : studentProfile.studentRiskScore >= 40
-                                ? 'amber'
-                                : 'green'
-                        }
+              <Card title="Student Certificates">
+                <div className="space-y-6">
+                  <form onSubmit={onSubmitStudentRequest} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-slate-950/50 ring-1 ring-white/10 px-3 py-2">
+                      <div className="text-xs text-slate-400">Student ID</div>
+                      <div className="text-sm font-mono text-slate-100">{user.username}</div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-300 mb-1">Certificate Type</label>
+                      <select
+                        value={studentRequestForm.certificateType}
+                        onChange={(e) => setStudentRequestForm((form) => ({ ...form, certificateType: e.target.value }))}
+                        className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
+                      >
+                        {CERTIFICATE_TYPES.map((type) => (
+                          <option key={type.value} value={type.value}>{type.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-xs text-slate-300 mb-1">Certificate Title / ID</label>
+                      <input
+                        value={studentRequestForm.title}
+                        onChange={(e) => setStudentRequestForm((form) => ({ ...form, title: e.target.value }))}
+                        className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
+                        placeholder="Certificate number, event name, course name"
                       />
-                      <Badge label={`Credentials: ${studentProfile.credentialCount}`} tone="slate" />
                     </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-xs text-slate-300 mb-1">Description</label>
+                      <textarea
+                        value={studentRequestForm.description}
+                        onChange={(e) => setStudentRequestForm((form) => ({ ...form, description: e.target.value }))}
+                        className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100 h-24"
+                        placeholder="Add issuer, event, course, or certificate details needed for verification"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-xs text-slate-300 mb-1">Certificate File</label>
+                      <input
+                        type="file"
+                        ref={studentFileInputRef}
+                        onChange={(e) => setStudentRequestForm((form) => ({ ...form, file: e.target.files?.[0] || null }))}
+                        className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                      />
+                    </div>
+                    <button
+                      disabled={studentRequestLoading}
+                      className="md:col-span-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
+                    >
+                      {studentRequestLoading ? 'Sending...' : 'Send Request'}
+                    </button>
+                    {studentRequestError ? <div className="md:col-span-2 text-sm text-rose-200">{studentRequestError}</div> : null}
+                  </form>
 
-                    {/* Credentials Cards */}
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">My Credentials</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {(studentProfile.credentials || []).map((c) => (
-                          <div key={c.credentialHash} className="p-4 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-slate-200">{c.issuerId}</span>
-                              <div className="flex gap-2">
-                                <span className={`px-2 py-1 rounded-full text-xs ${
-                                  c.blockchain?.exists ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
-                                }`}>
-                                  {c.blockchain?.exists ? '✓ On-chain' : '✗ Off-chain'}
-                                </span>
-                                <span className={`px-2 py-1 rounded-full text-xs ${
-                                  c.risk?.ok && c.risk.riskScore <= 30 ? 'bg-emerald-500/20 text-emerald-300' : 
-                                  c.risk?.ok && c.risk.riskScore <= 60 ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                                }`}>
-                                  Risk: {c.risk?.ok ? c.risk.riskScore : '-'}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="text-xs text-slate-400 mb-1 font-mono break-all">{c.credentialHash}</div>
-                            <div className="text-xs text-slate-500">Trust: {c.trustRank}/5</div>
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Achieved Certificates</h4>
+                    <div className="space-y-2">
+                      {approvedRequests.length === 0 ? (
+                        <div className="text-sm text-slate-500">No approved certificates yet.</div>
+                      ) : approvedRequests.map((request) => (
+                        <div key={request.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                          <div>
+                            <div className="text-sm text-slate-200">{request.title}</div>
+                            <div className="text-xs text-slate-500">{CERTIFICATE_TYPES.find((type) => type.value === request.certificateType)?.label}</div>
+                            <div className="font-mono text-xs text-slate-400 mt-1">{maskHash(request.credentialHash)}</div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Documents */}
-                    {studentDocuments.length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">My Documents</h4>
-                        <div className="space-y-2">
-                          {studentDocuments.map((doc) => (
-                            <div key={doc.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-                                  <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                  </svg>
-                                </div>
-                                <div>
-                                  <div className="text-sm text-slate-200">{doc.filename}</div>
-                                  <div className="text-xs text-slate-500">{(doc.file_size / 1024).toFixed(1)} KB • {new Date(doc.uploaded_at || doc.created_at).toLocaleDateString()}</div>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => {
-                                  const byteCharacters = atob(doc.file_data);
-                                  const byteNumbers = new Array(byteCharacters.length);
-                                  for (let i = 0; i < byteCharacters.length; i++) {
-                                    byteNumbers[i] = byteCharacters.charCodeAt(i);
-                                  }
-                                  const byteArray = new Uint8Array(byteNumbers);
-                                  const blob = new Blob([byteArray], { type: doc.content_type });
-                                  const url = URL.createObjectURL(blob);
-                                  const a = document.createElement('a');
-                                  a.href = url;
-                                  a.download = doc.filename;
-                                  a.click();
-                                  URL.revokeObjectURL(url);
-                                }}
-                                className="px-3 py-1 bg-indigo-500 hover:bg-indigo-400 text-white rounded-lg text-xs font-medium"
-                              >
-                                Download
-                              </button>
-                            </div>
-                          ))}
+                          <button
+                            type="button"
+                            onClick={() => copyHashToClipboard(request.credentialHash, `student-${request.id}`)}
+                            className="rounded-lg bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 text-xs font-medium"
+                          >
+                            {copiedHashKey === `student-${request.id}` ? 'Copied' : 'Copy Hash'}
+                          </button>
                         </div>
-                      </div>
-                    )}
-
-                    {/* Verification History */}
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Verification History</h4>
-                      <div className="space-y-2">
-                        {studentVerificationHistory.map((entry, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                                <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                              </div>
-                              <div>
-                                <div className="text-sm text-slate-200">Verified by {entry.verifier}</div>
-                                <div className="text-xs text-slate-500">{new Date(entry.date).toLocaleString()}</div>
-                              </div>
-                            </div>
-                            <span className="px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs">{entry.result}</span>
-                          </div>
-                        ))}
-                      </div>
+                      ))}
                     </div>
                   </div>
-                )}
+
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Under Process</h4>
+                    <div className="space-y-2">
+                      {pendingRequests.length === 0 && rejectedRequests.length === 0 ? (
+                        <div className="text-sm text-slate-500">No active requests.</div>
+                      ) : [...pendingRequests, ...rejectedRequests].map((request) => (
+                        <div key={request.id} className="p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="text-sm text-slate-200">{request.title}</div>
+                              <div className="text-xs text-slate-500">Sent to {request.assignedIssuerId}</div>
+                            </div>
+                            <Badge label={request.status === 'rejected' ? 'Not Accepted' : 'Under Process'} tone={request.status === 'rejected' ? 'red' : 'amber'} />
+                          </div>
+                          {request.rejectionReason ? <div className="mt-2 text-xs text-rose-200">{request.rejectionReason}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </Card>
             ) : tab === 'institution' ? (
-              <Card title="Institution Portal">
+              <Card title="Incharge Review Queue">
                 <div className="space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-end gap-3">
+                    <div className="flex-1">
+                      <label className="block text-xs text-slate-300 mb-1">Incharge Issuer ID</label>
+                      <input
+                        value={institutionIssuerId}
+                        onChange={(e) => setInstitutionIssuerId(e.target.value)}
+                        className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
+                        placeholder="TEACHER-STUDENT-INCHARGE"
+                        disabled={isInchargeRole(user.role)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadInstitutionData(institutionIssuerId)}
+                      disabled={institutionLoading || !institutionIssuerId}
+                      className="rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
+                    >
+                      {institutionLoading ? 'Loading...' : 'Load Requests'}
+                    </button>
+                  </div>
+
                   <div className="text-sm text-slate-300">
-                    Issue credentials, upload batches, and view institution statistics.
-                  </div>
-                  
-                  {/* Issue Single Credential */}
-                  <div className="border-t border-white/10 pt-4">
-                    <h4 className="text-sm font-semibold text-slate-200 mb-3">Issue Single Credential</h4>
-                    <form onSubmit={async (e) => {
-                      e.preventDefault();
-                      setInstitutionLoading(true);
-                      setInstitutionError('');
-                      try {
-                        let ipfsCid = null;
-                        
-                        // Upload document directly (no IPFS needed - stores in PostgreSQL)
-                        if (institutionDocument) {
-                          try {
-                            const formData = new FormData();
-                            formData.append('file', institutionDocument);
-                            
-                            const uploadResponse = await fetch(`${getApiBaseUrl()}/api/ipfs/upload`, {
-                              method: 'POST',
-                              body: formData
-                            });
-                            
-                            if (uploadResponse.ok) {
-                              const uploadResult = await uploadResponse.json();
-                              ipfsCid = uploadResult.cid;
-                            } else {
-                              console.warn('File upload failed, continuing without document');
-                            }
-                          } catch (uploadErr) {
-                            console.warn('File upload error:', uploadErr);
-                          }
-                        }
-
-                        const response = await fetch(`${getApiBaseUrl()}/api/credentials/issue`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json'
-                          },
-                          body: JSON.stringify({
-                            studentId: institutionIssueStudentId,
-                            issuerId: institutionIssuerId,
-                            credentialData: institutionIssueData,
-                            ipfsCid: ipfsCid
-                          })
-                        });
-                        const result = await response.json();
-                        if (!response.ok) throw new Error(result.error || 'Issue failed');
-                        
-                        // Save document metadata if uploaded
-                        if (ipfsCid && result.credentialHash) {
-                          await fetch(`${getApiBaseUrl()}/api/documents/upload`, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                              credentialHash: result.credentialHash,
-                              studentId: institutionIssueStudentId,
-                              issuerId: institutionIssuerId,
-                              filename: institutionDocument.name,
-                              content_type: institutionDocument.type,
-                              file_size: institutionDocument.size,
-                              ipfs_cid: ipfsCid
-                            })
-                          });
-                        }
-                        
-                        // Create copyable hash notification
-                        const hash = result.credentialHash;
-                        const notification = document.createElement('div');
-                        notification.style.cssText = `
-                          position: fixed;
-                          top: 20px;
-                          right: 20px;
-                          background: #10b981;
-                          color: white;
-                          padding: 16px;
-                          border-radius: 8px;
-                          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                          z-index: 1000;
-                          max-width: 400px;
-                        `;
-                        notification.innerHTML = `
-                          <div style="font-weight: bold; margin-bottom: 8px;">✅ Credential Issued Successfully!</div>
-                          <div style="font-size: 12px; margin-bottom: 8px;">Hash (click to copy):</div>
-                          <div style="
-                            background: rgba(255,255,255,0.2);
-                            padding: 8px;
-                            border-radius: 4px;
-                            font-family: monospace;
-                            font-size: 11px;
-                            word-break: break-all;
-                            cursor: pointer;
-                            user-select: all;
-                          " onclick="navigator.clipboard.writeText('${hash}'); this.style.background='rgba(255,255,255,0.4)'; setTimeout(() => this.style.background='rgba(255,255,255,0.2)', 200)">${hash}</div>
-                          <div style="font-size: 10px; margin-top: 8px; opacity: 0.8;">Click hash to copy to clipboard</div>
-                        `;
-                        document.body.appendChild(notification);
-                        setTimeout(() => document.body.removeChild(notification), 8000);
-                        
-                        // Clear form
-                        setInstitutionIssueStudentId('');
-                        setInstitutionIssueData('');
-                      } catch (err) {
-                        setInstitutionError(err.message);
-                      } finally {
-                        setInstitutionLoading(false);
-                      }
-                    }} className="flex flex-col gap-3">
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Issuer ID</label>
-                        <input
-                          value={institutionIssuerId}
-                          onChange={(e) => setInstitutionIssuerId(e.target.value)}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          placeholder="UNI-DEMO"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Student ID</label>
-                        <input
-                          value={institutionIssueStudentId}
-                          onChange={(e) => setInstitutionIssueStudentId(e.target.value)}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          placeholder="S-DEMO-001"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Credential Data</label>
-                        <textarea
-                          value={institutionIssueData}
-                          onChange={(e) => setInstitutionIssueData(e.target.value)}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100 h-20"
-                          placeholder="Bachelor of Computer Science - 2024"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Document (Optional)</label>
-                        <input
-                          type="file"
-                          onChange={(e) => setInstitutionDocument(e.target.files[0])}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                        />
-                        {institutionDocument && (
-                          <div className="text-xs text-slate-400 mt-1">
-                            Selected: {institutionDocument.name}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        disabled={institutionLoading}
-                        className="rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
-                      >
-                        {institutionLoading ? 'Issuing...' : 'Issue Credential'}
-                      </button>
-                    </form>
+                    {isInchargeRole(user.role) ? INCHARGE_ROLE_LABEL[user.role] : 'Admin technical view'} checks submitted certificates, generates the credential hash from the request data, adds accepted certificates to blockchain, and returns the hash to the student.
                   </div>
 
-                  {/* Batch Upload */}
-                  <div className="border-t border-white/10 pt-4">
-                    <h4 className="text-sm font-semibold text-slate-200 mb-3">Batch Upload</h4>
-                    <form onSubmit={async (e) => {
-                      e.preventDefault();
-                      setInstitutionLoading(true);
-                      setInstitutionError('');
-                      try {
-                        const credentials = institutionCredentials.split('\n').filter(line => line.trim()).map(line => {
-                          const [studentId, data] = line.split('|').map(s => s.trim());
-                          return { studentId, credentialData: data };
-                        });
-                        const response = await fetch(`${getApiBaseUrl()}/api/institutions/batches`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json'
-                          },
-                          body: JSON.stringify({
-                            issuerId: institutionIssuerId,
-                            batchName: institutionBatchName,
-                            credentials
-                          })
-                        });
-                        const result = await response.json();
-                        if (!response.ok) throw new Error(result.error || 'Batch upload failed');
-                        alert(`Batch uploaded successfully!\nBatch ID: ${result.batchId}\nCredentials: ${result.credentials?.length || 0}`);
-                      } catch (err) {
-                        setInstitutionError(err.message);
-                      } finally {
-                        setInstitutionLoading(false);
-                      }
-                    }} className="flex flex-col gap-3">
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Batch Name</label>
-                        <input
-                          value={institutionBatchName}
-                          onChange={(e) => setInstitutionBatchName(e.target.value)}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                          placeholder="CS Graduates 2024"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-300 mb-1">Credentials (one per line: StudentID|CredentialData)</label>
-                        <textarea
-                          value={institutionCredentials}
-                          onChange={(e) => setInstitutionCredentials(e.target.value)}
-                          className="w-full rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100 h-32 font-mono text-xs"
-                          placeholder="S-DEMO-001|Bachelor of Computer Science&#10;S-DEMO-002|Master of AI&#10;S-DEMO-003|PhD in Data Science"
-                        />
-                      </div>
-                      <button
-                        disabled={institutionLoading}
-                        className="rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
-                      >
-                        {institutionLoading ? 'Uploading...' : 'Upload Batch'}
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* View Stats */}
-                  <div className="border-t border-white/10 pt-4">
-                    <h4 className="text-sm font-semibold text-slate-200 mb-3">Institution Statistics</h4>
-                    <form onSubmit={async (e) => {
-                      e.preventDefault();
-                      setInstitutionLoading(true);
-                      setInstitutionError('');
-                      try {
-                        const response = await fetch(`${getApiBaseUrl()}/api/institutions/stats/${encodeURIComponent(institutionIssuerId)}`);
-                        const result = await response.json();
-                        if (!response.ok) throw new Error(result.error || 'Stats fetch failed');
-                        setInstitutionStats(result);
-                        loadInstitutionData(institutionIssuerId);
-                      } catch (err) {
-                        setInstitutionError(err.message);
-                      } finally {
-                        setInstitutionLoading(false);
-                      }
-                    }} className="flex gap-2">
-                      <input
-                        value={institutionIssuerId}
-                        onChange={(e) => setInstitutionIssuerId(e.target.value)}
-                        className="flex-1 rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                        placeholder="UNI-DEMO"
-                      />
-                      <button
-                        disabled={institutionLoading}
-                        className="rounded-xl bg-slate-500 hover:bg-slate-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
-                      >
-                        {institutionLoading ? 'Loading...' : 'View Stats'}
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Load Credentials for Revocation */}
-                  <div className="border-t border-white/10 pt-4">
-                    <h4 className="text-sm font-semibold text-slate-200 mb-3">Manage Credentials (Revoke)</h4>
-                    <div className="flex gap-2">
-                      <input
-                        value={institutionIssuerId}
-                        onChange={(e) => setInstitutionIssuerId(e.target.value)}
-                        className="flex-1 rounded-xl bg-slate-950/60 ring-1 ring-white/10 px-3 py-2 text-sm text-slate-100"
-                        placeholder="UNI-DEMO"
-                      />
-                      <button
-                        onClick={async () => {
-                          if (!institutionIssuerId) {
-                            alert('Please enter an Issuer ID');
-                            return;
-                          }
-                          setInstitutionLoading(true);
-                          setInstitutionError('');
-                          try {
-                            await loadInstitutionData(institutionIssuerId);
-                          } catch (err) {
-                            setInstitutionError(err.message);
-                          } finally {
-                            setInstitutionLoading(false);
-                          }
-                        }}
-                        disabled={institutionLoading}
-                        className="rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-60 text-white px-4 py-2 text-sm font-semibold"
-                      >
-                        {institutionLoading ? 'Loading...' : 'Load Credentials'}
-                      </button>
+                  {inchargeRequests.length === 0 ? (
+                    <div className="rounded-xl bg-slate-950/40 ring-1 ring-white/10 p-6 text-sm text-slate-400">
+                      No certificate requests for this incharge yet.
                     </div>
-                  </div>
-
-                  {institutionStats && (
-                    <div className="mt-3 p-3 rounded-xl bg-slate-950/30 ring-1 ring-white/10">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-slate-200">{institutionStats.totalIssuedAttempts || 0}</div>
-                          <div className="text-xs text-slate-500">Total Issued</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-emerald-400">{((institutionStats.chainSuccessRate || 0) * 100).toFixed(0)}%</div>
-                          <div className="text-xs text-slate-500">Success Rate</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-slate-200">{(institutionStats.avgRisk || 0).toFixed(0)}</div>
-                          <div className="text-xs text-slate-500">Avg Risk</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-rose-400">{institutionStats.revocations || 0}</div>
-                          <div className="text-xs text-slate-500">Revocations</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Enhanced Institution Dashboard Sections */}
-                  {institutionStats && (
-                    <div className="mt-6 space-y-6">
-                      {/* Batch History */}
-                      {institutionBatches.length > 0 && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Batch History</h4>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="text-left border-b border-white/10">
-                                  <th className="pb-2 text-slate-300">Batch Name</th>
-                                  <th className="pb-2 text-slate-300">Status</th>
-                                  <th className="pb-2 text-slate-300">Credentials</th>
-                                  <th className="pb-2 text-slate-300">Created</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {institutionBatches.map((b) => (
-                                  <tr key={b.batch_id || b.id} className="border-b border-white/5">
-                                    <td className="py-2 text-slate-200">{b.batch_name || b.name}</td>
-                                    <td className="py-2">
-                                      <span className={`px-2 py-1 rounded-full text-xs ${
-                                        b.status === 'completed' ? 'bg-emerald-500/20 text-emerald-300' :
-                                        b.status === 'pending' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                                      }`}>
-                                        {b.status || 'Unknown'}
-                                      </span>
-                                    </td>
-                                    <td className="py-2 text-slate-300">{b.credential_count || b.credentials?.length || 0}</td>
-                                    <td className="py-2 text-slate-400 text-xs">{new Date(b.created_at).toLocaleDateString()}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                  ) : (
+                    <div className="space-y-6">
+                      {[
+                        {
+                          key: 'current',
+                          title: 'Current Requests',
+                          empty: 'No current requests.',
+                          requests: currentInchargeRequests
+                        },
+                        {
+                          key: 'history',
+                          title: 'History / Preview Analyzed',
+                          empty: 'No analyzed requests yet.',
+                          requests: reviewedInchargeRequests
+                        }
+                      ].map((section) => (
+                        <div key={section.key}>
+                          <div className="mb-3 flex items-center justify-between">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">{section.title}</h4>
+                            <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-xs font-semibold text-cyan-100 ring-1 ring-cyan-300/15">{section.requests.length}</span>
                           </div>
-                        </div>
-                      )}
-
-                      {/* Student List */}
-                      {institutionStudents.length > 0 && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Students Issued</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {institutionStudents.map((s) => (
-                              <div key={s.studentId} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-full bg-indigo-500/20 flex items-center justify-center">
-                                    <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                    </svg>
-                                  </div>
-                                  <div>
-                                    <div className="text-sm text-slate-200 font-mono">{s.studentId}</div>
-                                    <div className="text-xs text-slate-500">{s.count} credential(s)</div>
-                                  </div>
-                                </div>
+                          {section.requests.length === 0 ? (
+                            <div className="rounded-lg bg-slate-950/40 p-4 text-sm text-slate-500 ring-1 ring-white/10">{section.empty}</div>
+                          ) : (
+                            <div className="space-y-3">
+                              {section.requests.map((request) => (
+                        <div key={request.id} className="p-4 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
+                          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <span className="text-sm font-semibold text-slate-100">{request.title}</span>
+                                <Badge
+                                  label={request.status === 'approved' ? 'Approved' : request.status === 'rejected' ? 'Not Accepted' : 'Pending'}
+                                  tone={request.status === 'approved' ? 'green' : request.status === 'rejected' ? 'red' : 'amber'}
+                                />
                               </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Credentials with Revoke */}
-                      {institutionCredentialsList.length > 0 && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Issued Credentials</h4>
-                          <div className="space-y-2 max-h-64 overflow-y-auto">
-                            {institutionCredentialsList.map((c) => (
-                              <div key={c.credential_hash} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-xs text-slate-400 font-mono truncate">{c.credential_hash?.substring(0, 16)}...</div>
-                                  <div className="text-xs text-slate-500">{c.student_id}</div>
+                              <div className="text-xs text-slate-500 mb-2">
+                                {request.studentId} - {CERTIFICATE_TYPES.find((type) => type.value === request.certificateType)?.label || request.certificateType}
+                              </div>
+                              <div className="text-sm text-slate-300 whitespace-pre-wrap">{request.description}</div>
+                              {request.filename ? (
+                                <div className="mt-3 flex flex-col gap-2 rounded-lg bg-cyan-400/5 ring-1 ring-cyan-300/15 p-3 sm:flex-row sm:items-center sm:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-semibold uppercase tracking-wider text-cyan-200">Uploaded Document</div>
+                                    <div className="mt-1 truncate text-sm text-slate-200">{request.filename}</div>
+                                    {request.fileSize ? (
+                                      <div className="text-xs text-slate-500">{formatFileSize(request.fileSize)}</div>
+                                    ) : null}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenRequestDocument(request)}
+                                    disabled={!request.hasDocument}
+                                    className="shrink-0 rounded-lg bg-cyan-400/15 px-3 py-2 text-xs font-semibold text-cyan-100 ring-1 ring-cyan-300/20 hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    View Document
+                                  </button>
                                 </div>
+                              ) : (
+                                <div className="mt-3 rounded-lg bg-slate-950/40 ring-1 ring-white/10 p-3 text-xs text-slate-500">
+                                  No document uploaded with this request.
+                                </div>
+                              )}
+                              {requestHashPreviews[request.id] ? (
+                                <div className="mt-2 rounded-lg bg-slate-900/70 ring-1 ring-white/10 p-2">
+                                  <div className="text-xs text-slate-500 mb-1">Generated hash preview</div>
+                                  <div className="font-mono text-xs text-amber-200 break-all">{requestHashPreviews[request.id]}</div>
+                                </div>
+                              ) : null}
+                              {request.credentialHash ? (
+                                <div className="mt-2 rounded-lg bg-emerald-950/20 ring-1 ring-emerald-500/20 p-2">
+                                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="text-xs text-emerald-300 mb-1">Returned hash</div>
+                                      <div className="font-mono text-xs text-emerald-200 break-all">{request.credentialHash}</div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => copyHashToClipboard(request.credentialHash, `incharge-${request.id}`)}
+                                      className="rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100 px-3 py-1 text-xs font-semibold"
+                                    >
+                                      {copiedHashKey === `incharge-${request.id}` ? 'Copied' : 'Copy'}
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+                              {request.rejectionReason ? <div className="mt-2 text-xs text-rose-200">{request.rejectionReason}</div> : null}
+                            </div>
+
+                            {request.status === 'pending' ? (
+                              <div className="w-full md:w-64 flex flex-col gap-2">
+                                <textarea
+                                  value={reviewNotes[request.id] || ''}
+                                  onChange={(e) => setReviewNotes((notes) => ({ ...notes, [request.id]: e.target.value }))}
+                                  className="w-full rounded-xl bg-slate-900/80 ring-1 ring-white/10 px-3 py-2 text-xs text-slate-100 h-20"
+                                  placeholder="Reason if not accepted"
+                                />
                                 <button
-                                  onClick={() => onRevokeCredential(c.credential_hash)}
-                                  disabled={institutionLoading}
-                                  className="ml-3 px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-medium disabled:opacity-50"
+                                  type="button"
+                                  onClick={() => onGenerateRequestHashPreview(request)}
+                                  className="rounded-lg bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 text-xs font-semibold"
                                 >
-                                  Revoke
+                                  Generate Hash
                                 </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Activity Log */}
-                      {institutionActivity.length > 0 && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Recent Activity</h4>
-                          <div className="space-y-2">
-                            {institutionActivity.map((activity, idx) => (
-                              <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/50 ring-1 ring-white/10">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                                    <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                  </div>
-                                  <div>
-                                    <div className="text-sm text-slate-200">{activity.action}</div>
-                                    <div className="text-xs text-slate-500">{activity.details}</div>
-                                  </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={institutionLoading}
+                                    onClick={() => onReviewCertificateRequest(request.id, 'rejected')}
+                                    className="rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                                  >
+                                    Not Accepted
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={institutionLoading}
+                                    onClick={() => onReviewCertificateRequest(request.id, 'approved')}
+                                    className="rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                                  >
+                                    Add & Return
+                                  </button>
                                 </div>
-                                <div className="text-xs text-slate-400">{new Date(activity.date).toLocaleString()}</div>
                               </div>
-                            ))}
+                            ) : null}
                           </div>
                         </div>
-                      )}
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
 
-                  {institutionError && (
-                      <div className={`text-sm rounded-xl p-3 border ${institutionError.includes('already') || institutionError.includes('duplicate') ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-rose-500/10 border-rose-500/30 text-rose-200'}`}>
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{institutionError.includes('already') || institutionError.includes('duplicate') ? '⚠️' : '❌'}</span>
-                          <span>{institutionError}</span>
-                        </div>
-                        {(institutionError.includes('already') || institutionError.includes('duplicate')) && (
-                          <div className="mt-2 text-xs text-amber-300/70">
-                            This credential hash already exists on the blockchain. Use the Verify tab to check its status.
-                          </div>
-                        )}
-                      </div>
-                    )}
+                  {institutionError ? (
+                    <div className="text-sm rounded-xl p-3 border bg-rose-500/10 border-rose-500/30 text-rose-200">
+                      {institutionError}
+                    </div>
+                  ) : null}
                 </div>
               </Card>
             ) : tab === 'zkp' ? (
@@ -1850,29 +1514,6 @@ function AppContent({ user, onLogout }) {
                 setAdminActiveTab={setAdminActiveTab}
               />
             )}
-
-            {/* Collapsible Raw JSON */}
-            <details className="group">
-              <summary className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 hover:text-slate-300 transition-colors">
-                <svg className="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-                <span>View Raw JSON (Technical Details)</span>
-              </summary>
-              <div className="mt-2">
-                <Card title="Raw JSON">
-                  <pre className="text-xs text-slate-200 bg-slate-950/50 ring-1 ring-white/10 rounded-xl p-3 overflow-auto max-h-60">
-                    {tab === 'employer'
-                      ? (data ? JSON.stringify(data, null, 2) : '{ }')
-                      : tab === 'student'
-                        ? (studentProfile ? JSON.stringify(studentProfile, null, 2) : '{ }')
-                        : tab === 'institution'
-                          ? (institutionStats ? JSON.stringify(institutionStats, null, 2) : '{ }')
-                          : (zkpProof ? JSON.stringify(zkpProof, null, 2) : zkpVerifyResult ? JSON.stringify(zkpVerifyResult, null, 2) : '{ }')}
-                  </pre>
-                </Card>
-              </div>
-            </details>
           </div>
         </div>
       </div>
@@ -1893,8 +1534,10 @@ function AuthenticatedApp() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+      <div className="auth-shell min-h-screen flex items-center justify-center">
+        <div className="rounded-lg border border-cyan-100/10 bg-[#0b1220]/85 px-5 py-3 text-cyan-50 shadow-xl">
+          Loading...
+        </div>
       </div>
     );
   }
@@ -1905,3 +1548,4 @@ function AuthenticatedApp() {
 
   return <AppContent user={user} onLogout={logout} />;
 }
+

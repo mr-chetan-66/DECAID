@@ -4,10 +4,11 @@
   "description": "Decentralized Academic Identity and Credential Risk Assessment System",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\" \"npm run ai-service\"",
+    "dev": "concurrently -k -n backend,frontend,ai,auth \"npm run server\" \"npm run client\" \"npm run ai-service\" \"npm run auth-service\"",
     "server": "cd backend && npm run dev",
     "client": "cd frontend && npm run dev",
-    "ai-service": "cd ai-service && uvicorn main:app --reload --port 8000",
+    "ai-service": "cd ai-service && python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000",
+    "auth-service": "cd auth-service && python -m uvicorn main:app --reload --host 127.0.0.1 --port 8001",
     "blockchain": "cd blockchain && npx hardhat node",
     "deploy": "cd blockchain && npx hardhat run scripts/deploy.js --network localhost",
     "test": "cd backend && npm test && cd ../ai-service && python -m pytest",

@@ -6,8 +6,10 @@ export default function ProtectedRoute({ children, allowedRoles }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+      <div className="auth-shell min-h-screen flex items-center justify-center">
+        <div className="rounded-lg border border-cyan-100/10 bg-[#0b1220]/85 px-5 py-3 text-cyan-50 shadow-xl">
+          Loading...
+        </div>
       </div>
     );
   }

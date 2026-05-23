@@ -7,6 +7,7 @@ import bcrypt
 from jose import jwt, ExpiredSignatureError, JWTError
 from datetime import datetime, timedelta
 import os
+from typing import Optional
 
 app = FastAPI(title="DECAID Auth Service")
 
@@ -21,7 +22,7 @@ app.add_middleware(
 
 # Database setup
 DB_PATH = "auth.db"
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
+JWT_SECRET = os.getenv("JWT_SECRET", "local-dev-secret")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 
@@ -31,7 +32,7 @@ security = HTTPBearer()
 class UserRegister(BaseModel):
     username: str
     password: str
-    role: str  # student, institution, employer, admin
+    role: Optional[str] = None
 
 class UserLogin(BaseModel):
     username: str
@@ -105,15 +106,32 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     payload = verify_token(token)
     return payload
 
+ROLE_PREFIXES = {
+    "STU": "student",
+    "TSI": "teacher_student_incharge",
+    "FOR": "forum_incharge",
+    "NPT": "nptel_incharge",
+    "III": "iii_incharge",
+    "EMP": "employer",
+    "ADM": "admin",
+    "INS": "institution",
+}
+
+def infer_role_from_username(username: str) -> Optional[str]:
+    normalized = username.strip().upper()
+    if len(normalized) < 3:
+        return None
+    return ROLE_PREFIXES.get(normalized[:3])
+
 # API Endpoints
 
 @app.post("/register", response_model=UserResponse)
 def register(user: UserRegister):
     """Register a new user"""
-    # Validate role
-    valid_roles = ["student", "institution", "employer", "admin"]
-    if user.role not in valid_roles:
-        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}")
+    inferred_role = infer_role_from_username(user.username)
+    if not inferred_role:
+        valid_prefixes = ", ".join(ROLE_PREFIXES.keys())
+        raise HTTPException(status_code=400, detail=f"Invalid username prefix. Use one of: {valid_prefixes}")
     
     # Hash password
     hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -122,7 +140,7 @@ def register(user: UserRegister):
     try:
         cursor = conn.cursor()
         cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                      (user.username, hashed_password, user.role))
+                      (user.username, hashed_password, inferred_role))
         conn.commit()
         user_id = cursor.lastrowid
     except sqlite3.IntegrityError:
@@ -131,7 +149,7 @@ def register(user: UserRegister):
     finally:
         conn.close()
     
-    return UserResponse(id=user_id, username=user.username, role=user.role)
+    return UserResponse(id=user_id, username=user.username, role=inferred_role)
 
 @app.post("/login", response_model=LoginResponse)
 def login(user: UserLogin):
@@ -148,13 +166,21 @@ def login(user: UserLogin):
     # Verify password
     if not bcrypt.checkpw(user.password.encode('utf-8'), db_user['password'].encode('utf-8')):
         raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    inferred_role = infer_role_from_username(db_user['username']) or db_user['role']
+    if inferred_role != db_user['role']:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET role = ? WHERE id = ?", (inferred_role, db_user['id']))
+        conn.commit()
+        conn.close()
     
     # Create token
-    token = create_token(db_user['id'], db_user['username'], db_user['role'])
+    token = create_token(db_user['id'], db_user['username'], inferred_role)
     
     return LoginResponse(
         token=token,
-        user=UserResponse(id=db_user['id'], username=db_user['username'], role=db_user['role'])
+        user=UserResponse(id=db_user['id'], username=db_user['username'], role=inferred_role)
     )
 
 @app.get("/me", response_model=UserResponse)

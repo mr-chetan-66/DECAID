@@ -178,10 +178,26 @@ export async function initDatabase() {
 
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-        CONSTRAINT valid_role CHECK (role IN ('student', 'institution', 'employer', 'admin', 'pending'))
+        CONSTRAINT valid_role CHECK (role IN ('student', 'institution', 'teacher_student_incharge', 'forum_incharge', 'nptel_incharge', 'iii_incharge', 'employer', 'admin', 'pending'))
 
       )
 
+    `);
+
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'valid_role'
+            AND conrelid = 'users'::regclass
+        ) THEN
+          ALTER TABLE users DROP CONSTRAINT valid_role;
+        END IF;
+        ALTER TABLE users ADD CONSTRAINT valid_role
+          CHECK (role IN ('student', 'institution', 'teacher_student_incharge', 'forum_incharge', 'nptel_incharge', 'iii_incharge', 'employer', 'admin', 'pending'));
+      END $$;
     `);
 
     // Documents table for credential documents
@@ -214,6 +230,37 @@ export async function initDatabase() {
 
       )
 
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS certificate_requests (
+        id SERIAL PRIMARY KEY,
+        student_id VARCHAR(255) NOT NULL,
+        certificate_type VARCHAR(50) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        assigned_issuer_id VARCHAR(255) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        credential_hash VARCHAR(64),
+        tx_hash VARCHAR(255),
+        rejection_reason TEXT,
+        file_data TEXT,
+        filename VARCHAR(255),
+        content_type VARCHAR(100),
+        file_size BIGINT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS zkp_commitments (
+        commitment VARCHAR(64) PRIMARY KEY,
+        credential_hash VARCHAR(64) NOT NULL,
+        student_id VARCHAR(255) NOT NULL,
+        nonce TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
     `);
 
 
@@ -939,6 +986,129 @@ export async function getAllDocuments() {
   } catch (error) {
     console.error('Error getting all documents:', error);
     return [];
+  }
+}
+
+export async function createCertificateRequest(request) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO certificate_requests
+       (student_id, certificate_type, title, description, assigned_issuer_id,
+        file_data, filename, content_type, file_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        request.studentId,
+        request.certificateType,
+        request.title,
+        request.description,
+        request.assignedIssuerId,
+        request.fileData,
+        request.filename,
+        request.contentType,
+        request.fileSize
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error creating certificate request:', error);
+    return null;
+  }
+}
+
+export async function getCertificateRequests({ studentId, issuerId } = {}) {
+  try {
+    const filters = [];
+    const values = [];
+    if (studentId) {
+      values.push(studentId);
+      filters.push(`student_id = $${values.length}`);
+    }
+    if (issuerId) {
+      values.push(issuerId);
+      filters.push(`assigned_issuer_id = $${values.length}`);
+    }
+
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const result = await pool.query(
+      `SELECT * FROM certificate_requests ${where} ORDER BY created_at DESC`,
+      values
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error getting certificate requests:', error);
+    return [];
+  }
+}
+
+export async function getCertificateRequestById(id) {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM certificate_requests WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error getting certificate request:', error);
+    return null;
+  }
+}
+
+export async function updateCertificateRequestReview(id, updates) {
+  try {
+    const result = await pool.query(
+      `UPDATE certificate_requests
+       SET status = $2,
+           credential_hash = $3,
+           tx_hash = $4,
+           rejection_reason = $5,
+           reviewed_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        updates.status,
+        updates.credentialHash || null,
+        updates.txHash || null,
+        updates.rejectionReason || null
+      ]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error updating certificate request:', error);
+    return null;
+  }
+}
+
+export async function saveZkpCommitment({ credentialHash, studentId, commitment, nonce }) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO zkp_commitments (commitment, credential_hash, student_id, nonce)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (commitment) DO UPDATE SET
+         credential_hash = EXCLUDED.credential_hash,
+         student_id = EXCLUDED.student_id,
+         nonce = EXCLUDED.nonce
+       RETURNING *`,
+      [commitment.toLowerCase(), credentialHash.toLowerCase(), studentId, nonce]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error saving ZKP commitment:', error);
+    return null;
+  }
+}
+
+export async function getZkpCommitment(commitment) {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM zkp_commitments WHERE commitment = $1',
+      [commitment.toLowerCase()]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error getting ZKP commitment:', error);
+    return null;
   }
 }
 

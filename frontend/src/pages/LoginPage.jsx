@@ -7,7 +7,6 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isRegister, setIsRegister] = useState(false);
-  const [role, setRole] = useState('student');
 
   const { login, register } = useAuth();
 
@@ -18,7 +17,7 @@ export default function LoginPage() {
 
     try {
       if (isRegister) {
-        await register(username, password, role);
+        await register(username, password);
         // After registration, log in
         await login(username, password);
       } else {
@@ -33,21 +32,24 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+    <div className="auth-shell min-h-screen flex items-center justify-center p-4 text-slate-100">
       <div className="w-full max-w-md">
-        <div className="bg-slate-800/50 backdrop-blur-xl rounded-2xl border border-slate-700/50 p-8 shadow-2xl">
+        <div className="bg-[#0b1220]/86 backdrop-blur-xl rounded-lg border border-cyan-100/10 p-8 shadow-[0_24px_70px_rgba(0,0,0,0.34)]">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">DECAID</h1>
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-cyan-400/10 ring-1 ring-cyan-300/25 text-cyan-200 font-bold">
+              DC
+            </div>
+            <h1 className="text-3xl font-bold tracking-wide text-cyan-50 mb-2">DECAID</h1>
             <p className="text-slate-400">Decentralized Credential Verification</p>
           </div>
 
-          <div className="flex mb-6 bg-slate-900/50 rounded-lg p-1">
+          <div className="flex mb-6 bg-[#060a12]/70 rounded-lg p-1 ring-1 ring-cyan-100/10">
             <button
               onClick={() => setIsRegister(false)}
               className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
                 !isRegister
-                  ? 'bg-blue-600 text-white shadow-lg'
-                  : 'text-slate-400 hover:text-slate-300'
+                  ? 'bg-cyan-100 text-slate-950 shadow-lg shadow-cyan-950/20'
+                  : 'text-slate-400 hover:text-cyan-100'
               }`}
             >
               Login
@@ -56,8 +58,8 @@ export default function LoginPage() {
               onClick={() => setIsRegister(true)}
               className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
                 isRegister
-                  ? 'bg-blue-600 text-white shadow-lg'
-                  : 'text-slate-400 hover:text-slate-300'
+                  ? 'bg-cyan-100 text-slate-950 shadow-lg shadow-cyan-950/20'
+                  : 'text-slate-400 hover:text-cyan-100'
               }`}
             >
               Register
@@ -73,8 +75,8 @@ export default function LoginPage() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-900/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                placeholder="Enter your username"
+                className="w-full px-4 py-3 bg-slate-950/70 border border-slate-700/70 rounded-lg text-white placeholder-slate-500 focus:outline-none transition-all"
+                placeholder={isRegister ? 'STU001, TSI001, FOR001...' : 'Enter your username'}
                 required
               />
             </div>
@@ -87,32 +89,20 @@ export default function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-900/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                className="w-full px-4 py-3 bg-slate-950/70 border border-slate-700/70 rounded-lg text-white placeholder-slate-500 focus:outline-none transition-all"
                 placeholder="Enter your password"
                 required
               />
             </div>
 
             {isRegister && (
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Role
-                </label>
-                <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-900/50 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                >
-                  <option value="student">Student</option>
-                  <option value="institution">Institution</option>
-                  <option value="employer">Employer</option>
-                  <option value="admin">Admin</option>
-                </select>
+              <div className="rounded-lg bg-cyan-400/5 border border-cyan-300/15 p-3 text-xs text-slate-300">
+                Role is detected from the first 3 letters: STU student, TSI teacher-student incharge, FOR forum, NPT NPTEL/TNP, III internship, EMP employer, ADM admin.
               </div>
             )}
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-3 text-red-400 text-sm">
+              <div className="bg-rose-500/10 border border-rose-500/40 rounded-lg p-3 text-rose-200 text-sm">
                 {error}
               </div>
             )}
@@ -120,7 +110,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-3 text-white font-semibold rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Processing...' : isRegister ? 'Register' : 'Login'}
             </button>
@@ -132,7 +122,7 @@ export default function LoginPage() {
                 Already have an account?{' '}
                 <button
                   onClick={() => setIsRegister(false)}
-                  className="text-blue-400 hover:text-blue-300 transition-colors"
+                  className="text-cyan-300 hover:text-cyan-200 transition-colors"
                 >
                   Login
                 </button>
@@ -142,7 +132,7 @@ export default function LoginPage() {
                 Don't have an account?{' '}
                 <button
                   onClick={() => setIsRegister(true)}
-                  className="text-blue-400 hover:text-blue-300 transition-colors"
+                  className="text-cyan-300 hover:text-cyan-200 transition-colors"
                 >
                   Register
                 </button>
@@ -150,11 +140,6 @@ export default function LoginPage() {
             )}
           </div>
 
-          <div className="mt-4 p-4 bg-slate-900/30 rounded-lg border border-slate-700/30">
-            <p className="text-xs text-slate-500 text-center">
-              <strong>Default admin:</strong> username: <code className="text-blue-400">admin</code>, password: <code className="text-blue-400">admin123</code>
-            </p>
-          </div>
         </div>
       </div>
     </div>
