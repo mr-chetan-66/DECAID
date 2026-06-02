@@ -1151,30 +1151,6 @@ function AppContent({ user, onLogout }) {
                       </div>
                     )}
 
-                    {/* Trust Signals */}
-                    {data.trustSignals && (
-                      <div className="bg-slate-950/30 rounded-xl p-4 border border-white/5">
-                        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Issuer Trust Signals</h4>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-slate-200">{data.trustSignals.totalIssuedAttempts || 0}</div>
-                            <div className="text-xs text-slate-500">Total Issued</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-emerald-400">{((data.trustSignals.chainSuccessRate || 0) * 100).toFixed(0)}%</div>
-                            <div className="text-xs text-slate-500">Success Rate</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-slate-200">{(data.trustSignals.avgRisk || 0).toFixed(0)}</div>
-                            <div className="text-xs text-slate-500">Avg Risk</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-rose-400">{data.trustSignals.revocations || 0}</div>
-                            <div className="text-xs text-slate-500">Revocations</div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
               </Card>

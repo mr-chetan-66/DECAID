@@ -443,6 +443,51 @@ function sha256Hex(input) {
   return crypto.createHash('sha256').update(input).digest('hex');
 }
 
+function normalizeDocumentRecord(document) {
+  if (!document) return null;
+  return {
+    credentialHash: String(document.credential_hash || document.credentialHash || '').trim().toLowerCase(),
+    studentId: String(document.student_id || document.studentId || '').trim(),
+    issuerId: String(document.issuer_id || document.issuerId || '').trim(),
+    fileData: document.file_data || document.fileData || null,
+    filename: document.filename || null,
+    ipfsCid: document.ipfs_cid || document.ipfsCid || null
+  };
+}
+
+async function getStoredDocumentByHash(credentialHash) {
+  const h = String(credentialHash || '').trim().toLowerCase();
+  if (!h) return null;
+
+  if (useDatabase) {
+    return normalizeDocumentRecord(await getDocumentByCredentialHash(h));
+  }
+
+  return normalizeDocumentRecord(documentsStore.get(h));
+}
+
+async function hasCrossStudentDocumentDuplicate(credentialHash, studentId) {
+  const h = String(credentialHash || '').trim().toLowerCase();
+  const currentStudentId = String(studentId || '').trim();
+  if (!h || !currentStudentId) return false;
+
+  const currentDocument = await getStoredDocumentByHash(h);
+  if (!currentDocument?.fileData) return false;
+
+  const currentFingerprint = sha256Hex(currentDocument.fileData);
+  const documents = useDatabase
+    ? (await getAllDocuments()).map(normalizeDocumentRecord)
+    : Array.from(documentsStore.values()).map(normalizeDocumentRecord);
+
+  return documents.some((document) => (
+    document?.fileData &&
+    document.credentialHash !== h &&
+    document.studentId &&
+    document.studentId !== currentStudentId &&
+    sha256Hex(document.fileData) === currentFingerprint
+  ));
+}
+
 function loadRegistryArtifact() {
   const p = path.resolve(process.cwd(), 'src', 'contract', 'CredentialRegistry.json');
   const raw = fs.readFileSync(p, 'utf-8');
@@ -1281,6 +1326,7 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
   let storedStudentId = null;
   let storedIssuerId = null;
   let contentDuplicateDetected = false;
+  let documentDuplicateDetected = false;
   
   // If studentId or issuerId missing, try to find from batch data
   if ((!studentId || !issuerId) && useDatabase) {
@@ -1380,9 +1426,13 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
         // Get batch size if available
         const batchSize = 1; // Default to individual issuance
         
+        const storedDocument = await getStoredDocumentByHash(h);
+        documentDuplicateDetected = await hasCrossStudentDocumentDuplicate(h, effectiveStudentId);
+
         const duplicateFlag = duplicateDetected ? 1 : 0;
         const contentDuplicateFlag = contentDuplicateDetected ? 1 : 0;
-        console.log(`[AI Service Request] duplicateFlag: ${duplicateFlag}, contentDuplicateFlag: ${contentDuplicateFlag}, duplicateDetected: ${duplicateDetected}, contentDuplicateDetected: ${contentDuplicateDetected}`);
+        const documentDuplicateFlag = documentDuplicateDetected ? 1 : 0;
+        console.log(`[AI Service Request] duplicateFlag: ${duplicateFlag}, contentDuplicateFlag: ${contentDuplicateFlag}, documentDuplicateFlag: ${documentDuplicateFlag}, duplicateDetected: ${duplicateDetected}, contentDuplicateDetected: ${contentDuplicateDetected}, documentDuplicateDetected: ${documentDuplicateDetected}`);
 
         const r = await fetch(`${aiUrl}/score`, {
           method: 'POST',
@@ -1399,10 +1449,11 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
             timeGap,
             duplicateFlag,
             contentDuplicateFlag,
+            documentDuplicateFlag,
             batchSize,
             chainExists: chain.exists ? 1 : 0,
             revokedFlag: chain.revoked ? 1 : 0,
-            hasDocument: ipfsCid ? 1 : 0,
+            hasDocument: storedDocument ? 1 : 0,
             issuedAt: chain.issuedAt ? new Date(chain.issuedAt * 1000).toISOString() : undefined
           })
         });
@@ -1468,6 +1519,7 @@ app.get('/api/verify/by-hash/:hash', optionalAuth, async (req, res) => {
     trustSignals: trust.signals,
     duplicateDetected,
     contentDuplicateDetected,
+    documentDuplicateDetected,
     zkp,
     verificationContext: {
       mode: riskAssessmentAvailable ? 'contextual' : 'hash_only',

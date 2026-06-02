@@ -47,6 +47,7 @@ class ScoreRequest(BaseModel):
     timeGap: Optional[float] = Field(default=86400.0, ge=0)  # seconds between issuances
     duplicateFlag: Optional[int] = Field(default=0, ge=0, le=1)  # 1 if duplicate, else 0
     contentDuplicateFlag: Optional[int] = Field(default=0, ge=0, le=1)  # 1 if same credential content is reused for another student
+    documentDuplicateFlag: Optional[int] = Field(default=0, ge=0, le=1)  # 1 if same uploaded document is reused for another student
     batchSize: Optional[int] = Field(default=1, ge=1)  # number in batch
     chainExists: Optional[int] = Field(default=1, ge=0, le=1)
     revokedFlag: Optional[int] = Field(default=0, ge=0, le=1)
@@ -125,6 +126,7 @@ def _features(req: ScoreRequest) -> np.ndarray:
     # Behavioral flags
     duplicate_flag = float(req.duplicateFlag or 0)
     content_duplicate_flag = float(req.contentDuplicateFlag or 0)
+    document_duplicate_flag = float(req.documentDuplicateFlag or 0)
     has_batch = 1.0 if req.batchId else 0.0
     
     # Age of credential (normalized to years)
@@ -140,9 +142,9 @@ def _features(req: ScoreRequest) -> np.ndarray:
             student_credential_count_norm,  # Student's credentials (higher = more experienced)
             time_gap_norm,             # Time since last issuance (lower = more suspicious)
             batch_size_norm,           # Batch size (higher = more suspicious)
-            max(duplicate_flag, content_duplicate_flag),  # Duplicate/hash or content clone signal
+            max(duplicate_flag, content_duplicate_flag, document_duplicate_flag),  # Duplicate/hash/content/document clone signal
             has_batch,                 # Whether this is a batch issuance
-            age_years + (content_duplicate_flag * 0.25),  # Small bump for cloned content cases
+            age_years + (max(content_duplicate_flag, document_duplicate_flag) * 0.25),  # Small bump for cloned content cases
         ]],
         dtype=np.float32,
     )
@@ -198,6 +200,7 @@ def _gemini_review(req: ScoreRequest, base_score: int, base_reasons: list[str]) 
                             f"Revoked: {req.revokedFlag == 1}\n"
                             f"Duplicate hash: {req.duplicateFlag == 1}\n"
                             f"Duplicate content for another student: {req.contentDuplicateFlag == 1}\n"
+                            f"Duplicate uploaded document for another student: {req.documentDuplicateFlag == 1}\n"
                             f"Issuer trust rank: {req.issuerTrustScore}/5\n"
                             f"Issuer credential count: {req.credentialCount}\n"
                             f"Student credential count: {req.studentCredentialCount}\n"
@@ -258,6 +261,7 @@ def _gemini_review(req: ScoreRequest, base_score: int, base_reasons: list[str]) 
             and req.revokedFlag == 0
             and req.duplicateFlag == 0
             and req.contentDuplicateFlag == 0
+            and req.documentDuplicateFlag == 0
             and (req.issuerTrustScore or 3) > 2
             and (req.timeGap or 86400.0) >= 3600
             and (req.batchSize or 1) <= 20
@@ -346,6 +350,10 @@ def score(req: ScoreRequest):
             rule_score += 35
             reasons.append("A unique credential identifier was reused for a different student")
 
+        if req.documentDuplicateFlag == 1:
+            rule_score += 70
+            reasons.append("The same uploaded certificate document was reused for a different student")
+
         if req.chainExists == 0:
             rule_score += 45
             reasons.append("Credential hash was not found on blockchain")
@@ -393,6 +401,11 @@ def score(req: ScoreRequest):
         
         # Combine AI + rule-based scores (0-100)
         final_score = _clamp_int(ai_score + rule_score, 0, 100)
+
+        if req.documentDuplicateFlag == 1:
+            final_score = max(final_score, 85)
+        elif req.duplicateFlag == 1 or req.contentDuplicateFlag == 1:
+            final_score = max(final_score, 75)
         
         # Determine risk level
         if final_score <= 20:
